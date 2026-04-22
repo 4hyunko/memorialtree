@@ -1,0 +1,1191 @@
+/* ======================================================
+   Memorial Tree - Web App (free obituary builder)
+   Single-file vanilla JS SPA. Persistence: localStorage.
+   ====================================================== */
+
+(() => {
+  'use strict';
+
+  // ---------- Storage ----------
+  const STORAGE_KEY = 'mt.obituaries.v1';
+  const SESSION_KEY = 'mt.session.v1';
+
+  const storage = {
+    list() {
+      try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; }
+      catch { return []; }
+    },
+    save(list) { localStorage.setItem(STORAGE_KEY, JSON.stringify(list)); },
+    get(id) { return this.list().find(o => o.id === id); },
+    upsert(obit) {
+      const list = this.list();
+      const idx = list.findIndex(o => o.id === obit.id);
+      if (idx >= 0) list[idx] = obit; else list.unshift(obit);
+      this.save(list);
+      return obit;
+    },
+    remove(id) {
+      this.save(this.list().filter(o => o.id !== id));
+    }
+  };
+
+  const session = {
+    get() { try { return JSON.parse(sessionStorage.getItem(SESSION_KEY)) || {}; } catch { return {}; } },
+    set(s) { sessionStorage.setItem(SESSION_KEY, JSON.stringify(s)); },
+    clear() { sessionStorage.removeItem(SESSION_KEY); }
+  };
+
+  // ---------- Utilities ----------
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+  const uid = () => 'o_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+  const todayISO = () => new Date().toISOString().slice(0, 10);
+  const fmtDate = (iso) => iso ? iso.replaceAll('-', '.') : '';
+  const fmtDateTime = (iso) => {
+    if (!iso) return '';
+    const [d, t] = iso.split('T');
+    return d.replaceAll('-', '.') + (t ? ' ' + t.slice(0,5) : '');
+  };
+  const escapeHtml = (str = '') => String(str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+  function calcAge(birth, death) {
+    if (!birth || !death) return '';
+    const b = new Date(birth), d = new Date(death);
+    if (isNaN(b) || isNaN(d)) return '';
+    let age = d.getFullYear() - b.getFullYear();
+    const m = d.getMonth() - b.getMonth();
+    if (m < 0 || (m === 0 && d.getDate() < b.getDate())) age--;
+    return age >= 0 ? `향년 ${age}세` : '';
+  }
+  function calcKoreanAge(birthYYMMDD) {
+    if (!/^\d{6}$/.test(birthYYMMDD || '')) return null;
+    const yy = +birthYYMMDD.slice(0, 2);
+    const now = new Date().getFullYear();
+    const nowYY = now % 100;
+    const year = yy > nowYY ? 1900 + yy : 2000 + yy;
+    return now - year + 1;
+  }
+  function ageDisplay(birthYYMMDD) {
+    const a = calcKoreanAge(birthYYMMDD);
+    return a != null ? `향년 ${a}세` : '';
+  }
+
+  // ---------- Options (bottom-sheet data) ----------
+  const SEX_OPTIONS = ['남', '여'];
+  const RELATION_OPTIONS = ['미지정', '남편', '배우자(처)', '아들', '며느리', '딸', '사위', '손자', '손녀', '부모', '형제', '자매', '친척', '기타'];
+  const BANK_OPTIONS = [
+    'KB국민은행', '신한은행', '우리은행', 'NH농협은행', '하나은행',
+    'IBK기업은행', 'SC제일은행', '카카오뱅크', '토스뱅크', '케이뱅크',
+    '새마을금고', '우체국', '수협은행', '부산은행', '대구은행',
+    '광주은행', '전북은행', '제주은행', '신협', '기타',
+  ];
+
+  // ---------- Model ----------
+  function newObituary() {
+    return {
+      id: uid(),
+      status: 'draft', // draft | published | ended
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      password: '',
+      // 고인 정보
+      deceased: {
+        name: '', sex: '', birth: '', death: '',
+        titles: [''], // 직함 목록 (첫 행은 항상 유지)
+        photo: '', // dataURL
+        photoBW: false,
+        showPhoto: true, showTitle: true,
+      },
+      // 상주 (첫 행은 필수)
+      mourners: [{ relation: '', name: '' }], // [{relation, name}]
+      // 장례 일정
+      funeral: {
+        deathAt: '', // 별세일시
+        encoffinAt: '',
+        carryAt: '',
+        place: '', // 장지
+        funeralHome: '', // 빈소
+        showAll: true,
+      },
+      // 알리는 글
+      notice: '',
+      // 마음을 전하는 곳 (계좌) - 첫 행은 대표 계좌(필수)
+      donations: [{ relation: '', owner: '', bank: '', account: '' }], // [{relation, owner, bank, account}]
+      noDonation: false, // 부조금을 받지 않겠습니다
+      // 작성자 정보
+      author: { name: '', phone: '', relation: '' },
+      // 추모 메시지
+      messagesEnabled: true,
+      messages: [], // [{id, name, body, password, createdAt}]
+    };
+  }
+
+  // ---------- App state ----------
+  const state = {
+    route: 'landing',
+    params: {},
+    draft: null, // current editing obituary
+    activeObituaryId: null, // for menu actions
+  };
+
+  // ---------- Toast ----------
+  const toastEl = $('#toast');
+  let toastTimer;
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('is-show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('is-show'), 2200);
+  }
+
+  // ---------- Modal ----------
+  const modalEl = $('#modal'), modalPanel = $('#modalPanel');
+  function openModal({ title, desc, body = '', actions = [] }) {
+    return new Promise((resolve) => {
+      modalPanel.innerHTML = `
+        ${title ? `<div class="modal__title">${escapeHtml(title)}</div>` : ''}
+        ${desc ? `<div class="modal__desc">${escapeHtml(desc)}</div>` : ''}
+        ${body}
+        <div class="modal__actions ${actions.length === 1 ? 'modal__actions--single' : ''}">
+          ${actions.map((a, i) => `<button class="btn ${a.primary ? 'btn--primary' : 'btn--secondary'}" data-i="${i}">${escapeHtml(a.label)}</button>`).join('')}
+        </div>
+      `;
+      modalEl.setAttribute('aria-hidden', 'false');
+      modalPanel.querySelectorAll('button[data-i]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const i = +btn.dataset.i;
+          const a = actions[i];
+          const onClick = a.onClick;
+          if (onClick) {
+            const result = onClick(modalPanel);
+            if (result === false) return;
+          }
+          modalEl.setAttribute('aria-hidden', 'true');
+          resolve(a.value !== undefined ? a.value : i);
+        });
+      });
+    });
+  }
+  modalEl.querySelector('.modal__backdrop').addEventListener('click', () => modalEl.setAttribute('aria-hidden', 'true'));
+
+  // ---------- Bottom sheet ----------
+  const sheetEl = $('#bottomSheet'), sheetPanel = $('#bottomSheetPanel');
+  function openSheet(html) {
+    sheetPanel.innerHTML = html;
+    sheetEl.setAttribute('aria-hidden', 'false');
+  }
+  function closeSheet() { sheetEl.setAttribute('aria-hidden', 'true'); }
+  $('#bottomSheetBackdrop').addEventListener('click', closeSheet);
+
+  // Generic select-bottom-sheet
+  function openSelectSheet({ title, options, value, layout = 'grid', onSelect }) {
+    let selected = value ?? '';
+    const optsHTML = () => layout === 'grid'
+      ? `<div class="sheet-grid">${options.map(o => `
+          <button type="button" class="sheet-grid__item ${o === selected || o.value === selected ? 'is-selected' : ''}" data-v="${escapeHtml(typeof o === 'string' ? o : o.value)}">
+            ${escapeHtml(typeof o === 'string' ? o : o.label)}
+          </button>`).join('')}</div>`
+      : `<div class="sheet-list">${options.map(o => `
+          <button type="button" class="sheet-list__item ${o === selected || o.value === selected ? 'is-selected' : ''}" data-v="${escapeHtml(typeof o === 'string' ? o : o.value)}">
+            ${escapeHtml(typeof o === 'string' ? o : o.label)}
+          </button>`).join('')}</div>`;
+    openSheet(`
+      <div class="sheet-head">
+        <div class="sheet-title">${escapeHtml(title)}</div>
+        <button class="sheet-close" id="ssClose" aria-label="닫기">×</button>
+      </div>
+      <div id="ssOptions">${optsHTML()}</div>
+      <div class="sheet-confirm"><button class="btn btn--primary btn--block" id="ssConfirm" ${selected ? '' : 'disabled'}>선택 완료</button></div>
+    `);
+    const rebind = () => {
+      sheetPanel.querySelectorAll('[data-v]').forEach(btn => btn.addEventListener('click', () => {
+        selected = btn.dataset.v;
+        sheetPanel.querySelector('#ssOptions').innerHTML = optsHTML();
+        sheetPanel.querySelector('#ssConfirm').disabled = !selected;
+        rebind();
+      }));
+    };
+    rebind();
+    $('#ssClose').addEventListener('click', closeSheet);
+    $('#ssConfirm').addEventListener('click', () => {
+      if (!selected) return;
+      closeSheet();
+      onSelect(selected);
+    });
+  }
+
+  // ---------- Slide menu ----------
+  const slideMenu = $('#slideMenu');
+  function isSlideMenuOpen() { return slideMenu.getAttribute('aria-hidden') === 'false'; }
+  function openSlideMenu() {
+    slideMenu.setAttribute('aria-hidden', 'false');
+    $('#headerMenu').setAttribute('aria-expanded', 'true');
+  }
+  function closeSlideMenu() {
+    slideMenu.setAttribute('aria-hidden', 'true');
+    $('#headerMenu').setAttribute('aria-expanded', 'false');
+  }
+  $('#slideMenuClose').addEventListener('click', closeSlideMenu);
+  $('#slideMenuBackdrop').addEventListener('click', closeSlideMenu);
+  $('#headerMenu').addEventListener('click', openSlideMenu);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && isSlideMenuOpen()) closeSlideMenu(); });
+  slideMenu.addEventListener('click', (e) => {
+    const item = e.target.closest('[data-action]');
+    if (!item) return;
+    const action = item.dataset.action;
+    closeSlideMenu();
+    if (action === 'edit-obituary') {
+      const id = state.activeObituaryId || $('#headerTitle').dataset.activeId;
+      if (!id) return toast('수정할 부고장이 없습니다.');
+      askPassword(id, () => navigate('edit', { id }));
+    } else if (action === 'my-obituaries') {
+      navigate('my');
+    } else if (action === 'privacy') {
+      navigate('privacy');
+    } else if (action === 'terms') {
+      navigate('terms');
+    }
+  });
+
+  // ---------- Password gate ----------
+  function askPassword(id, onOk) {
+    const obit = storage.get(id);
+    if (!obit) return toast('부고장을 찾을 수 없습니다.');
+    openModal({
+      title: '비밀번호 확인',
+      desc: '부고장 작성 시 설정한 6자리 숫자를 입력해주세요.',
+      body: `<div class="field"><input type="password" inputmode="numeric" maxlength="6" class="input" id="modalPw" placeholder="••••••" autocomplete="off"></div>`,
+      actions: [
+        { label: '취소' },
+        { label: '확인', primary: true, onClick: (panel) => {
+            const v = panel.querySelector('#modalPw').value;
+            if (v !== obit.password) {
+              toast('비밀번호가 일치하지 않습니다.');
+              return false;
+            }
+          }
+        }
+      ]
+    }).then((res) => { if (res === 1) onOk(); });
+  }
+
+  // ---------- Routing ----------
+  function navigate(route, params = {}) {
+    state.route = route;
+    state.params = params;
+    render();
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }
+
+  function setHeader({ title, back = false, menu = true, activeId = null }) {
+    $('#headerTitle').innerHTML = title || `<span class="logo-mark">⚘</span> Memorial Tree`;
+    $('#headerTitle').dataset.activeId = activeId || '';
+    $('#headerBack').hidden = !back;
+    $('#headerMenu').style.display = menu ? '' : 'none';
+  }
+  $('#headerBack').addEventListener('click', () => {
+    // simple back logic
+    if (state.route === 'create' || state.route === 'edit') {
+      if (state.draft && hasUnsavedChanges()) {
+        openModal({
+          title: '작성 중인 내용이 있습니다.',
+          desc: '화면을 벗어나면 작성 중인 내용이 사라집니다.',
+          actions: [
+            { label: '더보기' },
+            { label: '벗어나기', primary: true, value: 'leave' },
+          ]
+        }).then((v) => { if (v === 'leave') { state.draft = null; navigate('landing'); } });
+      } else { navigate('landing'); }
+    } else if (state.route === 'preview') {
+      navigate('create');
+    } else if (state.route === 'detail') {
+      navigate('landing');
+    } else if (state.route === 'edit') {
+      navigate('detail', { id: state.params.id });
+    } else if (['my', 'privacy', 'terms', 'messages', 'message-write', 'ended'].includes(state.route)) {
+      history.length > 1 ? history.back() : navigate('landing');
+    } else {
+      navigate('landing');
+    }
+  });
+
+  function hasUnsavedChanges() {
+    return state.draft && (state.draft.deceased?.name || state.draft.author?.name || state.draft.funeral?.deathAt);
+  }
+
+  // ---------- Renderer ----------
+  const viewEl = $('#view');
+
+  function render() {
+    const r = state.route;
+    if (r === 'landing') return renderLanding();
+    if (r === 'my') return renderMyObituaries();
+    if (r === 'create' || r === 'edit') return renderEditor();
+    if (r === 'preview') return renderPreview();
+    if (r === 'detail') return renderDetail();
+    if (r === 'messages') return renderMessages();
+    if (r === 'message-write') return renderMessageWrite();
+    if (r === 'ended') return renderEnded();
+    if (r === 'privacy') return renderPolicy('개인정보처리방침');
+    if (r === 'terms') return renderPolicy('서비스 이용약관');
+    renderLanding();
+  }
+
+  // ---------- Landing ----------
+  function renderLanding() {
+    setHeader({ title: null, back: false, menu: true });
+    state.draft = null;
+    state.activeObituaryId = null;
+    viewEl.innerHTML = `
+      <section class="landing">
+        <div class="landing__ribbon">⚘</div>
+        <div class="landing__sub">간편 부고장</div>
+        <div class="landing__title">부고장을 제작합니다</div>
+        <div class="landing__desc">유족과 조문객들에게 전할 안내를 작성해보세요</div>
+        <div class="landing__visual"><span>⚘</span></div>
+        <div class="landing__cta">
+          <button class="btn btn--secondary" id="btnMy">나의 부고장 관리</button>
+          <button class="btn btn--primary" id="btnCreate">부고장 만들기</button>
+        </div>
+      </section>
+    `;
+    $('#btnMy').addEventListener('click', () => navigate('my'));
+    $('#btnCreate').addEventListener('click', () => { state.draft = newObituary(); navigate('create'); });
+  }
+
+  // ---------- My obituaries ----------
+  function renderMyObituaries() {
+    setHeader({ title: '나의 부고장 관리', back: true, menu: false });
+    const list = storage.list();
+    viewEl.innerHTML = `
+      <div class="list">
+        ${list.length === 0
+          ? `<div class="list__empty">아직 작성한 부고장이 없습니다.</div>`
+          : list.map(renderListCard).join('')
+        }
+      </div>
+      <div class="bottom-cta">
+        <button class="btn btn--primary btn--block" id="btnNew">부고장 만들기</button>
+      </div>
+    `;
+    $('#btnNew').addEventListener('click', () => { state.draft = newObituary(); navigate('create'); });
+
+    viewEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-act]');
+      if (!btn) return;
+      const id = btn.closest('.list__card').dataset.id;
+      const act = btn.dataset.act;
+      if (act === 'view') navigate('detail', { id });
+      else if (act === 'share') openShareSheet(id);
+      else if (act === 'continue') {
+        const obit = storage.get(id);
+        if (obit) { state.draft = JSON.parse(JSON.stringify(obit)); navigate('edit', { id }); }
+      } else if (act === 'delete') {
+        askPassword(id, () => {
+          openModal({
+            title: '부고장을 삭제하시겠습니까?',
+            desc: '삭제된 부고장은 복구할 수 없습니다.',
+            actions: [
+              { label: '취소' },
+              { label: '삭제하기', primary: true, value: 'del' },
+            ]
+          }).then((v) => { if (v === 'del') { storage.remove(id); toast('부고장이 삭제되었습니다.'); renderMyObituaries(); } });
+        });
+      }
+    });
+  }
+  function renderListCard(o) {
+    const d = o.deceased;
+    const isDraft = o.status === 'draft';
+    const isEnded = o.status === 'ended';
+    const statusLabel = isDraft ? '임시저장' : (isEnded ? '장례 종료' : '장례 중');
+    const statusClass = isDraft ? 'list__status--draft' : (isEnded ? 'list__status--ended' : '');
+    const meta = isDraft
+      ? `<div class="list__meta"><span class="label">임시저장</span>${fmtDate(o.updatedAt.slice(0,10))}</div>`
+      : `<div class="list__meta">
+            <span class="label">별세일</span>${fmtDate(o.funeral.deathAt?.slice(0,10) || d.death)}
+         </div>`;
+    const actions = isDraft
+      ? `<button class="list__btn" data-act="delete">삭제하기</button>
+         <button class="list__btn" data-act="continue">이어서 작성하기</button>`
+      : `<button class="list__btn" data-act="view">상세보기</button>
+         <button class="list__btn" data-act="share">공유하기</button>`;
+    return `
+      <article class="list__card" data-id="${o.id}">
+        <div class="list__row">
+          <div class="list__name">${escapeHtml(d.name || '(미입력)')}님</div>
+          <span class="list__status ${statusClass}">${statusLabel}</span>
+        </div>
+        ${meta}
+        <div class="list__actions">${actions}</div>
+      </article>
+    `;
+  }
+
+  // ---------- Editor (create / edit) ----------
+  function renderEditor() {
+    if (state.route === 'edit' && (!state.draft || state.draft.id !== state.params.id)) {
+      const o = storage.get(state.params.id);
+      if (!o) { navigate('landing'); return; }
+      state.draft = JSON.parse(JSON.stringify(o));
+    }
+    if (!state.draft) state.draft = newObituary();
+    if (!state.draft.mourners || state.draft.mourners.length === 0) {
+      state.draft.mourners = [{ relation: '', name: '' }];
+    }
+    if (!state.draft.donations || state.draft.donations.length === 0) {
+      state.draft.donations = [{ owner: '', bank: '', account: '' }];
+    }
+    if (!state.draft.deceased.titles || state.draft.deceased.titles.length === 0) {
+      // migrate legacy fields if present
+      const legacy = [state.draft.deceased.title, state.draft.deceased.roles]
+        .filter(Boolean).join('\n').split('\n').filter(Boolean);
+      state.draft.deceased.titles = legacy.length ? legacy : [''];
+      delete state.draft.deceased.title;
+      delete state.draft.deceased.roles;
+    }
+
+    const isEdit = state.route === 'edit';
+    setHeader({ title: isEdit ? '부고장 수정하기' : '부고장 만들기', back: true, menu: false });
+
+    const d = state.draft;
+    viewEl.innerHTML = `
+      <div class="create-page">
+        <div class="builder-notice"><span class="req">*</span> 표시는 필수 입력 항목입니다. 꼭 입력해주세요.</div>
+
+        <!-- 고인 정보 -->
+        <section class="section">
+          <div class="section__head">
+            <div class="section__title"><span class="icon-bullet">⚘</span>고인 정보</div>
+          </div>
+          <div class="field">
+            <label class="field__label">성함<span class="req">*</span></label>
+            <input class="input" data-bind="deceased.name" value="${escapeHtml(d.deceased.name)}" placeholder="홍길동" />
+          </div>
+          <div class="field">
+            <label class="field__label">생년월일</label>
+            <div style="display:grid;grid-template-columns:3fr 1fr;gap:8px;">
+              <input class="input" id="birthInput" data-bind="deceased.birth" value="${escapeHtml(d.deceased.birth||'')}" placeholder="예)810910" inputmode="numeric" maxlength="6" />
+              <input class="input" id="ageInput" value="${ageDisplay(d.deceased.birth)}" placeholder="향년" disabled />
+            </div>
+            <div class="field__hint">* 입력 시 향년 나이를 자동 계산합니다</div>
+          </div>
+          <div class="field">
+            <label class="field__label">직함</label>
+            <div id="titlesList">
+              ${(d.deceased.titles || ['']).map((t, i, arr) => titleRow(t, i, arr.length)).join('')}
+            </div>
+            <button class="btn btn--secondary btn--block" id="addTitle" style="height:44px;margin-top:8px;">+ 추가하기</button>
+          </div>
+          <div class="field">
+            <label class="field__label">영정 사진 (선택)</label>
+            ${d.deceased.photo ? `
+              <div class="photo-preview ${d.deceased.photoBW?'is-bw':''}">
+                <img src="${d.deceased.photo}" alt="영정사진" />
+              </div>
+              <div class="photo-controls">
+                <label class="toggle-row">
+                  <span>흑백 모드</span>
+                  <span class="toggle ${d.deceased.photoBW?'is-on':''}" data-toggle="deceased.photoBW"></span>
+                </label>
+                <button class="btn btn--secondary" id="rePhoto" style="height:36px;padding:0 12px;">다시 선택</button>
+              </div>
+            ` : `
+              <div class="photo-upload">
+                <button class="photo-upload__btn" id="addPhoto">+ 영정 사진 추가</button>
+                <div class="photo-upload__hint">이미지 파일(jpg, png) · 최대 20MB</div>
+              </div>
+            `}
+            <input type="file" id="photoInput" accept="image/jpeg,image/png" hidden />
+          </div>
+        </section>
+
+        <!-- 상주 정보 -->
+        <section class="section">
+          <div class="section__head">
+            <div class="section__title"><span class="icon-bullet">⚘</span>상주 정보</div>
+            <button class="btn--text" id="addMourner" style="font-size:13px;">+ 추가하기</button>
+          </div>
+          <div id="mournersList">
+            ${d.mourners.map((m, i) => mournerRow(m, i)).join('') || '<div class="muted text-center" style="font-size:12px;padding:8px 0;">상주를 추가해주세요</div>'}
+          </div>
+        </section>
+
+        <!-- 장례 일정 -->
+        <section class="section">
+          <div class="section__head">
+            <div class="section__title"><span class="icon-bullet">⚘</span>장례 일정</div>
+          </div>
+          <div class="field">
+            <label class="field__label">별세 일시<span class="req">*</span></label>
+            <input class="input" type="datetime-local" data-bind="funeral.deathAt" value="${d.funeral.deathAt}" />
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label class="field__label">입관 일시</label>
+              <input class="input" type="datetime-local" data-bind="funeral.encoffinAt" value="${d.funeral.encoffinAt}" />
+            </div>
+            <div class="field">
+              <label class="field__label">발인 일시</label>
+              <input class="input" type="datetime-local" data-bind="funeral.carryAt" value="${d.funeral.carryAt}" />
+            </div>
+          </div>
+          <div class="field">
+            <label class="field__label">빈소</label>
+            <input class="input" data-bind="funeral.funeralHome" value="${escapeHtml(d.funeral.funeralHome)}" placeholder="○○병원 장례식장 1호실" />
+          </div>
+          <div class="field">
+            <label class="field__label">장지</label>
+            <input class="input" data-bind="funeral.place" value="${escapeHtml(d.funeral.place)}" placeholder="화장장 / 추모공원" />
+          </div>
+        </section>
+
+        <!-- 알리는 글 -->
+        <section class="section">
+          <div class="section__head">
+            <div class="section__title"><span class="icon-bullet">⚘</span>알리는 글</div>
+            <span class="section__optional">선택</span>
+          </div>
+          <div class="field">
+            <textarea class="textarea" maxlength="500" data-bind="notice" placeholder="황망한 마음에 일일이 직접 연락드리지 못함을 널리 헤아려주시기 바랍니다.">${escapeHtml(d.notice)}</textarea>
+            <div class="field__counter"><span id="noticeCount">${(d.notice||'').length}</span>/500</div>
+          </div>
+        </section>
+
+        <!-- 마음을 전하는 곳 -->
+        <section class="section">
+          <div class="section__head">
+            <div class="section__title"><span class="icon-bullet">⚘</span>마음을 전하는 곳</div>
+            ${d.noDonation ? '' : `<button class="btn btn--secondary" id="addDonation" style="height:32px;padding:0 12px;font-size:13px;">+ 추가하기</button>`}
+          </div>
+          <div id="donationsList">
+            ${d.noDonation ? '' : d.donations.map((x, i) => donationRow(x, i)).join('')}
+          </div>
+          <label class="checkbox" style="margin-top:14px;">
+            <input type="checkbox" id="noDonationChk" ${d.noDonation ? 'checked' : ''}>
+            <span class="checkbox__box"></span>
+            <span>부조금을 받지 않겠습니다</span>
+          </label>
+        </section>
+
+        <!-- 작성자 정보 -->
+        <section class="section">
+          <div class="section__head">
+            <div class="section__title"><span class="icon-bullet">⚘</span>작성자 정보</div>
+          </div>
+          <div class="field">
+            <label class="field__label">작성자 성함<span class="req">*</span></label>
+            <input class="input" data-bind="author.name" value="${escapeHtml(d.author.name)}" placeholder="작성자 성함" />
+          </div>
+          <div class="field">
+            <label class="field__label">연락처<span class="req">*</span></label>
+            <input class="input" type="tel" data-bind="author.phone" value="${escapeHtml(d.author.phone)}" placeholder="010-1234-5678" />
+          </div>
+          <div class="field">
+            <label class="field__label">고인과의 관계</label>
+            <input class="input" data-bind="author.relation" value="${escapeHtml(d.author.relation)}" placeholder="예: 장남" />
+          </div>
+        </section>
+
+        <!-- 메시지 받기 -->
+        <section class="section">
+          <div class="section__head">
+            <div class="section__title"><span class="icon-bullet">⚘</span>추모 메시지 받기</div>
+            <span class="toggle ${d.messagesEnabled?'is-on':''}" data-toggle="messagesEnabled"></span>
+          </div>
+          <div class="muted" style="font-size:12px;">조문객들에게 추모 메시지를 받을 수 있어요.</div>
+        </section>
+
+        <!-- 비밀번호 -->
+        <section class="section">
+          <div class="section__head">
+            <div class="section__title"><span class="icon-bullet">🔒</span>부고장 비밀번호<span class="req">*</span></div>
+          </div>
+          <div class="field">
+            <input class="input" type="password" inputmode="numeric" maxlength="6" data-bind="password" value="${d.password}" placeholder="6자리 숫자" />
+            <div class="field__hint">부고장 수정/삭제 시 필요합니다.</div>
+          </div>
+        </section>
+
+        <section class="section">
+          <label class="checkbox" id="termsCheck">
+            <input type="checkbox" id="termsAgree">
+            <span class="checkbox__box"></span>
+            <span>개인정보 수집 및 이용에 동의합니다.</span>
+          </label>
+        </section>
+      </div>
+
+      <div class="bottom-cta bottom-cta--two">
+        <button class="btn btn--secondary" id="btnSaveDraft">임시저장</button>
+        <button class="btn btn--primary" id="btnPreview">미리보기</button>
+      </div>
+    `;
+
+    bindEditor();
+  }
+
+  function titleRow(value, i, total) {
+    // show trash when: (i > 0) OR (only row AND has value)
+    const hasValue = !!(value && value.trim());
+    const showTrash = (total > 1 && i > 0) || (total === 1 && hasValue);
+    return `
+      <div class="field-row" data-row="title" data-i="${i}" style="grid-template-columns:1fr auto;gap:6px;margin-bottom:8px;">
+        <input class="input" data-bind-arr="deceased.titles.${i}" data-title-input="${i}" value="${escapeHtml(value||'')}" placeholder="직함을 입력해 주세요" />
+        ${showTrash ? `<button class="btn--icon" data-remove="title" data-i="${i}" aria-label="삭제">🗑</button>` : `<span style="width:36px;"></span>`}
+      </div>
+    `;
+  }
+
+  function mournerRow(m, i) {
+    const isFirst = i === 0;
+    const namePlaceholder = isFirst ? '성함*' : '성함';
+    const relLabel = m.relation || (isFirst ? '관계*' : '관계 선택');
+    return `
+      <div class="field-row" data-row="mourner" data-i="${i}" style="margin-bottom:8px;">
+        <button type="button" class="select-trigger ${m.relation ? '' : 'is-placeholder'}" data-pick="mourner-rel" data-i="${i}">
+          <span>${escapeHtml(relLabel)}</span><span class="chev">▾</span>
+        </button>
+        <div style="display:flex;gap:6px;">
+          <input class="input" style="flex:1;" data-bind-arr="mourners.${i}.name" value="${escapeHtml(m.name||'')}" placeholder="${namePlaceholder}" ${isFirst ? 'required' : ''} />
+          ${isFirst ? '' : `<button class="btn--icon" data-remove="mourner" data-i="${i}" aria-label="삭제">🗑</button>`}
+        </div>
+      </div>
+    `;
+  }
+
+  function donationRow(x, i) {
+    const isFirst = i === 0;
+    const groupLabel = isFirst ? '대표 계좌' : '추가 계좌';
+    return `
+      <div class="donation-row" data-row="donation" data-i="${i}">
+        <div class="donation-row__head">
+          <span class="donation-row__label">${groupLabel}</span>
+          ${isFirst ? '' : `<button class="btn--icon donation-row__del" data-remove="donation" data-i="${i}" aria-label="계좌 삭제">🗑</button>`}
+        </div>
+        <div class="field-row">
+          <button type="button" class="select-trigger ${x.relation ? '' : 'is-placeholder'}" data-pick="donation-rel" data-i="${i}">
+            <span>${escapeHtml(x.relation || '관계*')}</span><span class="chev">▾</span>
+          </button>
+          <input class="input" data-bind-arr="donations.${i}.owner" value="${escapeHtml(x.owner||'')}" placeholder="예금주*" required />
+        </div>
+        <div class="field-row" style="margin-top:6px;">
+          <button type="button" class="select-trigger ${x.bank ? '' : 'is-placeholder'}" data-pick="bank" data-i="${i}">
+            <span>${escapeHtml(x.bank || '은행*')}</span><span class="chev">▾</span>
+          </button>
+          <input class="input" data-bind-arr="donations.${i}.account" value="${escapeHtml(x.account||'')}" placeholder="계좌번호*" inputmode="numeric" required />
+        </div>
+      </div>
+    `;
+  }
+
+  function bindEditor() {
+    const d = state.draft;
+
+    // bind inputs
+    viewEl.querySelectorAll('[data-bind]').forEach((el) => {
+      el.addEventListener('input', () => {
+        if (el.dataset.bind === 'deceased.birth') {
+          el.value = (el.value || '').replace(/\D/g, '').slice(0, 6);
+          const ageEl = $('#ageInput');
+          if (ageEl) ageEl.value = ageDisplay(el.value);
+        }
+        setByPath(d, el.dataset.bind, el.value);
+        if (el.dataset.bind === 'notice') $('#noticeCount').textContent = el.value.length;
+        updateCTAState();
+      });
+    });
+    viewEl.querySelectorAll('[data-bind-arr]').forEach((el) => {
+      el.addEventListener('input', () => {
+        setByPath(d, el.dataset.bindArr, el.value);
+        if (el.dataset.titleInput !== undefined) refreshTitles();
+      });
+    });
+    // Bottom-sheet pickers
+    viewEl.querySelectorAll('[data-pick]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const kind = el.dataset.pick;
+        if (kind === 'sex') {
+          openSelectSheet({
+            title: '성별 선택', layout: 'grid', options: SEX_OPTIONS, value: d.deceased.sex,
+            onSelect: (v) => { d.deceased.sex = v; renderEditor(); }
+          });
+        } else if (kind === 'mourner-rel') {
+          const i = +el.dataset.i;
+          openSelectSheet({
+            title: '관계 선택', layout: 'grid', options: RELATION_OPTIONS, value: d.mourners[i]?.relation,
+            onSelect: (v) => { d.mourners[i].relation = v; renderEditor(); }
+          });
+        } else if (kind === 'bank') {
+          const i = +el.dataset.i;
+          openSelectSheet({
+            title: '은행 선택', layout: 'list', options: BANK_OPTIONS, value: d.donations[i]?.bank,
+            onSelect: (v) => { d.donations[i].bank = v; renderEditor(); }
+          });
+        } else if (kind === 'donation-rel') {
+          const i = +el.dataset.i;
+          openSelectSheet({
+            title: '관계 선택', layout: 'grid', options: RELATION_OPTIONS, value: d.donations[i]?.relation,
+            onSelect: (v) => { d.donations[i].relation = v; renderEditor(); }
+          });
+        }
+      });
+    });
+
+    viewEl.querySelectorAll('[data-toggle]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const path = el.dataset.toggle;
+        const v = !getByPath(d, path);
+        setByPath(d, path, v);
+        el.classList.toggle('is-on', v);
+        if (path === 'deceased.photoBW') {
+          const p = viewEl.querySelector('.photo-preview');
+          if (p) p.classList.toggle('is-bw', v);
+        }
+      });
+    });
+
+    // photo
+    const photoInput = $('#photoInput');
+    const trigger = () => photoInput.click();
+    $('#addPhoto')?.addEventListener('click', trigger);
+    $('#rePhoto')?.addEventListener('click', trigger);
+    photoInput?.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      if (file.size > 20 * 1024 * 1024) return toast('파일 크기는 20MB 이하만 가능합니다.');
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        d.deceased.photo = ev.target.result;
+        renderEditor();
+      };
+      reader.readAsDataURL(file);
+    });
+
+    // titles (직함)
+    const refreshTitles = () => {
+      const list = d.deceased.titles || [''];
+      const host = $('#titlesList');
+      if (!host) return;
+      // preserve focus
+      const active = document.activeElement;
+      const focusIdx = active?.dataset?.titleInput;
+      const caret = active?.selectionStart;
+      host.innerHTML = list.map((t, i, arr) => titleRow(t, i, arr.length)).join('');
+      // rebind only the new rows
+      host.querySelectorAll('[data-bind-arr]').forEach((el) => {
+        el.addEventListener('input', () => {
+          setByPath(d, el.dataset.bindArr, el.value);
+          refreshTitles();
+        });
+      });
+      host.querySelectorAll('[data-remove="title"]').forEach((b) => {
+        b.addEventListener('click', () => {
+          const i = +b.dataset.i;
+          if (list.length === 1) list[0] = '';
+          else list.splice(i, 1);
+          refreshTitles();
+        });
+      });
+      // restore focus
+      if (focusIdx !== undefined) {
+        const next = host.querySelector(`[data-title-input="${focusIdx}"]`);
+        if (next) { next.focus(); try { next.setSelectionRange(caret, caret); } catch {} }
+      }
+    };
+    $('#addTitle')?.addEventListener('click', () => {
+      if (!d.deceased.titles) d.deceased.titles = [''];
+      d.deceased.titles.push('');
+      refreshTitles();
+      setTimeout(() => {
+        const rows = $('#titlesList').querySelectorAll('[data-title-input]');
+        rows[rows.length - 1]?.focus();
+      }, 0);
+    });
+    refreshTitles();
+
+    // mourners
+    $('#addMourner').addEventListener('click', () => {
+      d.mourners.push({ relation: '', name: '' });
+      renderEditor();
+    });
+    viewEl.querySelectorAll('[data-remove="mourner"]').forEach((b) => {
+      b.addEventListener('click', () => {
+        d.mourners.splice(+b.dataset.i, 1);
+        renderEditor();
+      });
+    });
+
+    // donations
+    $('#addDonation')?.addEventListener('click', () => {
+      d.donations.push({ relation: '', owner: '', bank: '', account: '' });
+      renderEditor();
+    });
+    $('#noDonationChk')?.addEventListener('change', (e) => {
+      d.noDonation = e.target.checked;
+      renderEditor();
+    });
+    viewEl.querySelectorAll('[data-remove="donation"]').forEach((b) => {
+      b.addEventListener('click', () => {
+        d.donations.splice(+b.dataset.i, 1);
+        renderEditor();
+      });
+    });
+
+    // CTA
+    $('#btnSaveDraft').addEventListener('click', () => {
+      d.status = 'draft';
+      d.updatedAt = new Date().toISOString();
+      storage.upsert(d);
+      toast('저장되었습니다.');
+      navigate('my');
+    });
+    $('#btnPreview').addEventListener('click', () => navigate('preview'));
+  }
+
+  function updateCTAState() { /* preview button always enabled */ }
+
+  function validate(d) {
+    if (!d.deceased.name?.trim()) return '필수항목을 다시 확인해주세요.';
+    if (!d.funeral.deathAt) return '필수항목을 다시 확인해주세요.';
+    if (!d.author.name?.trim()) return '필수항목을 다시 확인해주세요.';
+    if (!d.author.phone?.trim()) return '필수항목을 다시 확인해주세요.';
+    if (!/^\d{6}$/.test(d.password || '')) return '비밀번호는 6자리 숫자입니다.';
+    return null;
+  }
+
+  function getByPath(o, p) { return p.split('.').reduce((a, k) => a?.[k], o); }
+  function setByPath(o, p, v) {
+    const keys = p.split('.');
+    let cur = o;
+    for (let i = 0; i < keys.length - 1; i++) {
+      const k = keys[i]; const nk = keys[i+1];
+      if (!(k in cur)) cur[k] = /^\d+$/.test(nk) ? [] : {};
+      cur = cur[k];
+    }
+    cur[keys[keys.length - 1]] = v;
+  }
+
+  // ---------- Preview ----------
+  function renderPreview() {
+    setHeader({ title: '부고장 미리보기', back: true, menu: false });
+    const d = state.draft;
+    viewEl.innerHTML = obituaryHTML(d, { preview: true });
+    viewEl.insertAdjacentHTML('beforeend', `
+      <div class="bottom-cta bottom-cta--two">
+        <button class="btn btn--secondary" id="btnEdit">편집하기</button>
+        <button class="btn btn--primary" id="btnPublish">등록하기</button>
+      </div>
+    `);
+    $('#btnEdit').addEventListener('click', () => navigate('create'));
+    $('#btnPublish').addEventListener('click', () => {
+      d.status = 'published';
+      d.updatedAt = new Date().toISOString();
+      storage.upsert(d);
+      toast('부고장 링크가 복사되었습니다.');
+      try { navigator.clipboard?.writeText(`${location.href.split('#')[0]}#detail/${d.id}`); } catch {}
+      navigate('detail', { id: d.id });
+    });
+  }
+
+  // ---------- Detail (recipient view) ----------
+  function renderDetail() {
+    const id = state.params.id;
+    const o = storage.get(id);
+    if (!o) { toast('부고장을 찾을 수 없습니다.'); return navigate('landing'); }
+    state.activeObituaryId = id;
+    setHeader({ title: '부고장', back: true, menu: true, activeId: id });
+
+    if (o.status === 'ended') return navigate('ended');
+
+    viewEl.innerHTML = obituaryHTML(o, { preview: false });
+    viewEl.insertAdjacentHTML('beforeend', `
+      <div class="bottom-cta bottom-cta--two">
+        <button class="btn btn--secondary" id="btnFlower">헌화하기</button>
+        <button class="btn btn--primary" id="btnShare">공유하기</button>
+      </div>
+    `);
+    $('#btnFlower').addEventListener('click', () => toast('마음이 전달되었습니다.'));
+    $('#btnShare').addEventListener('click', () => openShareSheet(id));
+  }
+
+  function obituaryHTML(o, { preview }) {
+    const d = o.deceased;
+    const f = o.funeral;
+    const headTitle = d.name ? `삼가 ${escapeHtml(d.name)}님의<br>명복을 빕니다.` : '삼가 고인의<br>명복을 빕니다.';
+
+    const photoBlock = d.showPhoto && d.photo
+      ? `<div class="deceased__photo ${d.photoBW?'is-bw':''}"><img src="${d.photo}" alt="영정"></div>`
+      : `<div class="deceased__photo" style="display:flex;align-items:center;justify-content:center;color:#bbb;">⚘</div>`;
+
+    return `
+      <div class="obituary">
+        <header class="obituary__hero">
+          <div class="ribbon">⚘</div>
+          <div class="head-title">${headTitle}</div>
+          <div class="head-sub">${fmtDate(f.deathAt?.slice(0,10) || d.death)} 별세</div>
+        </header>
+        <div class="obituary__body">
+
+          <section class="card">
+            <div class="card__title"><span class="ico">⚘</span>고인 정보</div>
+            <div class="deceased">
+              ${photoBlock}
+              <div>
+                <div class="deceased__name">故 ${escapeHtml(d.name || '')}님</div>
+                <div class="deceased__meta">
+                  ${[fmtDate(f.deathAt?.slice(0,10) || d.death) + ' 별세', ageDisplay(d.birth)]
+                    .filter(Boolean).join(' · ')}
+                </div>
+                ${d.showTitle && (d.titles || []).some(t => t && t.trim()) ? `<div class="deceased__roles">${(d.titles||[]).filter(t => t && t.trim()).map(escapeHtml).join('<br>')}</div>` : ''}
+              </div>
+            </div>
+          </section>
+
+          ${o.mourners.length ? `
+            <section class="card">
+              <div class="card__title"><span class="ico">⚘</span>상주</div>
+              <dl class="def-list">
+                ${o.mourners.map(m => `<div class="row"><dt>${escapeHtml(m.relation || '')}</dt><dd>${escapeHtml(m.name || '')}</dd></div>`).join('')}
+              </dl>
+            </section>
+          `:''}
+
+          <section class="card">
+            <div class="card__title"><span class="ico">⚘</span>장례 일정</div>
+            <dl class="def-list">
+              <div class="row"><dt>별세일</dt><dd>${fmtDateTime(f.deathAt)}</dd></div>
+              ${f.encoffinAt ? `<div class="row"><dt>입관일시</dt><dd>${fmtDateTime(f.encoffinAt)}</dd></div>`:''}
+              ${f.carryAt ? `<div class="row"><dt>발인일시</dt><dd>${fmtDateTime(f.carryAt)}</dd></div>`:''}
+              ${f.place ? `<div class="row"><dt>장지</dt><dd>${escapeHtml(f.place)}</dd></div>`:''}
+            </dl>
+          </section>
+
+          ${f.funeralHome ? `
+            <section class="card">
+              <div class="card__title"><span class="ico">⚘</span>빈소</div>
+              <div class="def-list">${escapeHtml(f.funeralHome)}</div>
+              <div class="copy-row" style="margin-top:6px;">
+                <button data-copy="${escapeHtml(f.funeralHome)}">주소 복사</button>
+              </div>
+            </section>
+          `:''}
+
+          ${o.notice ? `
+            <section class="card">
+              <div class="card__title"><span class="ico">⚘</span>알리는 글</div>
+              <div class="message-block">${escapeHtml(o.notice)}</div>
+            </section>
+          `:''}
+
+          ${!o.noDonation && o.donations.some(x => x.bank || x.account) ? `
+            <section class="card">
+              <div class="card__title"><span class="ico">⚘</span>마음을 전하는 곳</div>
+              ${o.donations.filter(x => x.bank || x.account).map(x => `
+                <div style="margin-bottom:10px;">
+                  <div style="font-size:13px;color:var(--c-text-2);">
+                    ${escapeHtml(x.relation || '')}${x.relation && x.owner ? ' · ' : ''}${escapeHtml(x.owner || '')}
+                  </div>
+                  <div class="copy-row">
+                    <span class="label">${escapeHtml(x.bank || '')}</span>
+                    <span>${escapeHtml(x.account || '')}</span>
+                    <button data-copy="${escapeHtml(x.account || '')}" data-toast="계좌 번호가 복사되었습니다.">복사</button>
+                  </div>
+                </div>
+              `).join('')}
+            </section>
+          `:''}
+
+          ${o.messagesEnabled ? `
+            <section class="card">
+              <div class="card__title" style="display:flex;justify-content:space-between;">
+                <span><span class="ico">⚘</span>추모 메시지</span>
+                ${!preview ? `<button class="btn--text" id="goMessages" style="font-size:12px;">더보기 ›</button>`:''}
+              </div>
+              ${o.messages.slice(0,2).length === 0
+                ? `<div class="muted" style="font-size:13px;">아직 추모 메시지가 없습니다.</div>`
+                : o.messages.slice(0,2).map(messageItem).join('')}
+            </section>
+          `:''}
+
+        </div>
+      </div>
+    `;
+  }
+
+  function messageItem(m) {
+    return `
+      <div class="message-list-item" data-msg-id="${m.id}">
+        <div class="row">
+          <div><span class="name">${escapeHtml(m.name)}</span> <span style="margin-left:6px;">${fmtDate(m.createdAt.slice(0,10))}</span></div>
+          <button class="btn--text" data-msg-del="${m.id}" style="font-size:12px;">삭제</button>
+        </div>
+        <div class="body">${escapeHtml(m.body)}</div>
+      </div>
+    `;
+  }
+
+  // ---------- Detail-level event delegation ----------
+  document.addEventListener('click', (e) => {
+    const copy = e.target.closest('[data-copy]');
+    if (copy) {
+      const v = copy.dataset.copy;
+      navigator.clipboard?.writeText(v).then(() => toast(copy.dataset.toast || '복사되었습니다.'));
+    }
+    const goMsg = e.target.closest('#goMessages');
+    if (goMsg) navigate('messages', { id: state.activeObituaryId });
+
+    const delMsg = e.target.closest('[data-msg-del]');
+    if (delMsg) {
+      const mid = delMsg.dataset.msgDel;
+      const o = storage.get(state.activeObituaryId);
+      if (!o) return;
+      openModal({
+        title: '추모 메시지를 삭제하시겠습니까?',
+        body: `<div class="field"><input type="password" inputmode="numeric" maxlength="6" class="input" id="msgPw" placeholder="작성 시 입력한 비밀번호" /></div>`,
+        actions: [
+          { label: '취소' },
+          { label: '삭제하기', primary: true, onClick: (panel) => {
+              const v = panel.querySelector('#msgPw').value;
+              const m = o.messages.find(x => x.id === mid);
+              if (!m || m.password !== v) { toast('비밀번호가 일치하지 않습니다.'); return false; }
+              o.messages = o.messages.filter(x => x.id !== mid);
+              storage.upsert(o);
+              toast('추모 메시지가 삭제되었습니다.');
+              if (state.route === 'messages') renderMessages();
+              else if (state.route === 'detail') renderDetail();
+            } },
+        ]
+      });
+    }
+  });
+
+  // ---------- Share sheet ----------
+  function openShareSheet(id) {
+    const url = `${location.href.split('#')[0]}#detail/${id}`;
+    openSheet(`
+      <div class="sheet-head"><div class="sheet-title">공유하기</div><button class="sheet-close" id="ssClose">×</button></div>
+      <div class="share-list">
+        <button data-share="kakao"><span class="icon">💬</span><span>카카오톡으로 공유</span></button>
+        <button data-share="copy"><span class="icon">🔗</span><span>링크 복사하기</span></button>
+        <button data-share="native"><span class="icon">📤</span><span>다른 앱으로 공유</span></button>
+      </div>
+    `);
+    $('#ssClose').addEventListener('click', closeSheet);
+    sheetPanel.querySelectorAll('[data-share]').forEach((b) => b.addEventListener('click', () => {
+      const t = b.dataset.share;
+      if (t === 'copy') { navigator.clipboard?.writeText(url); toast('부고장 링크가 복사되었습니다.'); }
+      else if (t === 'native' && navigator.share) { navigator.share({ url, title: '부고장' }).catch(()=>{}); }
+      else if (t === 'kakao') { toast('카카오톡 SDK 연동이 필요합니다.'); }
+      closeSheet();
+    }));
+  }
+
+  // ---------- Messages list ----------
+  function renderMessages() {
+    const id = state.params.id || state.activeObituaryId;
+    const o = storage.get(id);
+    if (!o) return navigate('landing');
+    state.activeObituaryId = id;
+    setHeader({ title: '추모 메시지', back: true, menu: false });
+    viewEl.innerHTML = `
+      <div class="list" style="background:var(--c-surface);min-height:100%;">
+        ${o.messages.length === 0
+          ? `<div class="list__empty">아직 추모 메시지가 없습니다.<br><br>아래 + 버튼을 눌러 첫 메시지를 남겨주세요.</div>`
+          : o.messages.map(messageItem).join('')}
+      </div>
+      <button class="fab" id="addMsg" aria-label="추모 메시지 작성">+</button>
+    `;
+    $('#addMsg').addEventListener('click', () => navigate('message-write', { id }));
+  }
+
+  // ---------- Message write ----------
+  function renderMessageWrite() {
+    const id = state.params.id || state.activeObituaryId;
+    setHeader({ title: '추모 메시지 작성', back: true, menu: false });
+    viewEl.innerHTML = `
+      <div style="padding:16px;background:var(--c-surface);min-height:100%;">
+        <div class="field">
+          <label class="field__label">이름</label>
+          <input class="input" id="mName" placeholder="작성자명을 입력해주세요." />
+        </div>
+        <div class="field">
+          <label class="field__label">비밀번호</label>
+          <input class="input" id="mPw" type="password" inputmode="numeric" maxlength="6" placeholder="수정, 삭제를 위해 필요합니다." />
+          <div class="field__hint">6자리 숫자로 입력해주세요</div>
+        </div>
+        <div class="field">
+          <label class="field__label">내용</label>
+          <textarea class="textarea" id="mBody" maxlength="100" placeholder="삼가 고인의 명복을 빕니다."></textarea>
+          <div class="field__counter"><span id="mCount">0</span>/100</div>
+        </div>
+      </div>
+      <div class="bottom-cta">
+        <button class="btn btn--primary btn--block" id="mSubmit" disabled>등록하기</button>
+      </div>
+    `;
+    const name = $('#mName'), pw = $('#mPw'), body = $('#mBody'), submit = $('#mSubmit'), count = $('#mCount');
+    const update = () => {
+      count.textContent = body.value.length;
+      submit.disabled = !(name.value.trim() && /^\d{6}$/.test(pw.value) && body.value.trim());
+    };
+    [name, pw, body].forEach(el => el.addEventListener('input', update));
+    submit.addEventListener('click', () => {
+      const o = storage.get(id);
+      if (!o) return;
+      o.messages.unshift({
+        id: 'm_' + Math.random().toString(36).slice(2,8),
+        name: name.value.trim(),
+        password: pw.value,
+        body: body.value.trim(),
+        createdAt: new Date().toISOString(),
+      });
+      storage.upsert(o);
+      toast('추모 메시지가 등록되었습니다.');
+      navigate('messages', { id });
+    });
+  }
+
+  // ---------- Ended page ----------
+  function renderEnded() {
+    setHeader({ title: '부고장', back: true, menu: false });
+    viewEl.innerHTML = `
+      <div class="ended">
+        <div class="ribbon">⚘</div>
+        <div class="label">장례 종료</div>
+        <h2>따뜻한 위로 감사합니다.</h2>
+        <p>바쁘신 와중에도 조문해 주시고 위로해주셔서 감사합니다.<br>
+        덕분에 무사히 장례를 마쳤습니다.<br>
+        베풀어 주신 마음 오래도록 간직하겠습니다.</p>
+      </div>
+    `;
+  }
+
+  // ---------- Policy pages ----------
+  function renderPolicy(title) {
+    setHeader({ title, back: true, menu: false });
+    viewEl.innerHTML = `
+      <div class="policy">
+        <p>본 ${escapeHtml(title)} 문서는 데모용입니다. 실제 서비스 운영 시 약관 내용으로 교체해주세요. 약관 내용 입니다. 약관 내용 입니다. 약관 내용 입니다. 약관 내용 입니다. 약관 내용 입니다. 약관 내용 입니다. 약관 내용 입니다.</p>
+      </div>
+    `;
+  }
+
+  // ---------- URL hash routing (for shared links) ----------
+  function syncFromHash() {
+    const hash = location.hash.slice(1);
+    if (!hash) return false;
+    const [route, ...rest] = hash.split('/');
+    if (route === 'detail' && rest[0]) {
+      navigate('detail', { id: rest[0] });
+      return true;
+    }
+    return false;
+  }
+  window.addEventListener('hashchange', syncFromHash);
+
+  // ---------- Boot ----------
+  if (!syncFromHash()) renderLanding();
+})();

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#1a1a1a" />
+  <title>Memorial Tree - 무료 부고장 (간편 부고장)</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app" class="app">
+    <!-- Header -->
+    <header class="header" id="header">
+      <button class="header__back" id="headerBack" aria-label="뒤로가기" hidden>‹</button>
+      <h1 class="header__title" id="headerTitle">
+        <span class="logo-mark">⚘</span>
+        Memorial Tree
+      </h1>
+      <button class="header__menu" id="headerMenu" aria-label="메뉴">≡</button>
+    </header>
+
+    <!-- Views container -->
+    <main class="view" id="view"></main>
+
+    <!-- Slide menu -->
+    <aside class="slide-menu" id="slideMenu" aria-hidden="true">
+      <div class="slide-menu__panel">
+        <button class="slide-menu__close" id="slideMenuClose" aria-label="닫기">×</button>
+        <nav class="slide-menu__nav">
+          <button class="slide-menu__item" data-action="edit-obituary">부고장 수정하기</button>
+          <button class="slide-menu__item" data-action="my-obituaries">나의 부고장 관리</button>
+        </nav>
+        <div class="slide-menu__footer">
+          <button class="slide-menu__link" data-action="privacy">개인정보처리방침</button>
+          <button class="slide-menu__link" data-action="terms">서비스 이용약관</button>
+        </div>
+      </div>
+      <div class="slide-menu__backdrop" id="slideMenuBackdrop"></div>
+    </aside>
+
+    <!-- Bottom-sheet container -->
+    <div class="bottom-sheet" id="bottomSheet" aria-hidden="true">
+      <div class="bottom-sheet__backdrop" id="bottomSheetBackdrop"></div>
+      <div class="bottom-sheet__panel" id="bottomSheetPanel"></div>
+    </div>
+
+    <!-- Modal container -->
+    <div class="modal" id="modal" aria-hidden="true">
+      <div class="modal__backdrop"></div>
+      <div class="modal__panel" id="modalPanel"></div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast" id="toast" aria-live="polite"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
