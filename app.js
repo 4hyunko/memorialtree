@@ -1,5 +1,5 @@
 /* ======================================================
-   Memorial Tree - Web App (free obituary builder)
+   수정Memorial Tree - Web App (free obituary builder)
    Single-file vanilla JS SPA. Persistence: Firestore.
    ====================================================== */
 
@@ -35,7 +35,7 @@ const obitsCol = collection(db, 'obituaries');
       else localStorage.removeItem(PHOTO_KEY(id));
     } catch (e) { console.warn('localStorage photo write failed', e); }
   };
-  const removeLocalPhoto = (id) => { try { localStorage.removeItem(PHOTO_KEY(id)); } catch {} };
+  const removeLocalPhoto = (id) => { try { localStorage.removeItem(PHOTO_KEY(id)); } catch { } };
 
   // ---------- Password hashing (SHA-256 + app pepper) ----------
   const HASH_PREFIX = 'h1:';
@@ -573,7 +573,7 @@ const obitsCol = collection(db, 'obituaries');
           <div class="calendar__title">${year}.${String(month + 1).padStart(2, '0')}</div>
           <button type="button" class="calendar__nav" id="dpNext" ${canNext ? '' : 'disabled'}>›</button>
         </div>
-        <div class="calendar__weekdays">${['S','M','T','W','T','F','S'].map(w => `<div>${w}</div>`).join('')}</div>
+        <div class="calendar__weekdays">${['S', 'M', 'T', 'W', 'T', 'F', 'S'].map(w => `<div>${w}</div>`).join('')}</div>
         ${buildCalendarHTML(year, month, selected, todayStr, allowFuture)}
         <div class="sheet-actions">
           <button type="button" class="btn btn--secondary" id="dpReset">초기화</button>
@@ -641,7 +641,7 @@ const obitsCol = collection(db, 'obituaries');
           <div class="calendar__title">${year}.${String(month + 1).padStart(2, '0')}</div>
           <button type="button" class="calendar__nav" id="dtNext" ${disabledArea ? 'disabled' : ''}>›</button>
         </div>
-        <div class="calendar__weekdays">${['S','M','T','W','T','F','S'].map(w => `<div>${w}</div>`).join('')}</div>
+        <div class="calendar__weekdays">${['S', 'M', 'T', 'W', 'T', 'F', 'S'].map(w => `<div>${w}</div>`).join('')}</div>
         <div ${disabledArea ? 'style="opacity:.4;pointer-events:none;"' : ''}>
           ${buildCalendarHTML(year, month, selected, todayStr, true)}
         </div>
