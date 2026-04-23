@@ -1,53 +1,64 @@
 /* ======================================================
    Memorial Tree - Web App (free obituary builder)
-   Firestore-backed SPA with App Check + author info encryption.
+   Single-file vanilla JS SPA. Persistence: localStorage.
    ====================================================== */
-
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { initializeAppCheck, ReCaptchaV3Provider } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check.js";
-import {
-  getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc,
-  query, where, orderBy
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-
-const firebaseConfig = {
-  apiKey: "AIzaSyBiTgTlFO99hgVXZ0MG_PKdEdlUP9s5iCY",
-  authDomain: "memorialtree-6446e.firebaseapp.com",
-  databaseURL: "https://memorialtree-6446e-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "memorialtree-6446e",
-  storageBucket: "memorialtree-6446e.firebasestorage.app",
-  messagingSenderId: "717119474073",
-  appId: "1:717119474073:web:60fa0098fc24442f396b08"
-};
-const RECAPTCHA_SITE_KEY = "6LegRMQsAAAAAIYhbdSTNTegOVJjVVx5MrScnzUI";
-
-const firebaseApp = initializeApp(firebaseConfig);
-try {
-  initializeAppCheck(firebaseApp, {
-    provider: new ReCaptchaV3Provider(RECAPTCHA_SITE_KEY),
-    isTokenAutoRefreshEnabled: true,
-  });
-} catch (e) { console.warn('[AppCheck] init failed', e); }
-const db = getFirestore(firebaseApp);
-const COL = 'obituaries';
 
 (() => {
   'use strict';
+
+  // ---------- Storage ----------
+  const STORAGE_KEY = 'mt.obituaries.v1';
+  const SESSION_KEY = 'mt.session.v1';
+
+  const storage = {
+    list() {
+      try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; }
+      catch { return []; }
+    },
+    save(list) { localStorage.setItem(STORAGE_KEY, JSON.stringify(list)); },
+    get(id) { return this.list().find(o => o.id === id); },
+    upsert(obit) {
+      const list = this.list();
+      const idx = list.findIndex(o => o.id === obit.id);
+      if (idx >= 0) list[idx] = obit; else list.unshift(obit);
+      this.save(list);
+      return obit;
+    },
+    remove(id) {
+      this.save(this.list().filter(o => o.id !== id));
+    }
+  };
+
+  const session = {
+    get() { try { return JSON.parse(sessionStorage.getItem(SESSION_KEY)) || {}; } catch { return {}; } },
+    set(s) { sessionStorage.setItem(SESSION_KEY, JSON.stringify(s)); },
+    clear() { sessionStorage.removeItem(SESSION_KEY); }
+  };
 
   // ---------- Utilities ----------
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
   const uid = () => 'o_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
-  const fmtDate = (iso) => iso ? String(iso).replaceAll('-', '.') : '';
+  const todayISO = () => new Date().toISOString().slice(0, 10);
+  const fmtDate = (iso) => iso ? iso.replaceAll('-', '.') : '';
   const fmtDateTime = (iso) => {
     if (!iso) return '';
-    const [d, t] = String(iso).split('T');
-    return d.replaceAll('-', '.') + (t ? ' ' + t.slice(0,5) : '');
+    const [d, t] = iso.split('T');
+    return d.replaceAll('-', '.') + (t ? ' ' + t.slice(0, 5) : '');
   };
   const escapeHtml = (str = '') => String(str)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
+  function calcAge(birth, death) {
+    if (!birth || !death) return '';
+    const b = new Date(birth), d = new Date(death);
+    if (isNaN(b) || isNaN(d)) return '';
+    let age = d.getFullYear() - b.getFullYear();
+    const m = d.getMonth() - b.getMonth();
+    if (m < 0 || (m === 0 && d.getDate() < b.getDate())) age--;
+    return age >= 0 ? `향년 ${age}세` : '';
+  }
   function calcKoreanAge(birthYYMMDD) {
     if (!/^\d{6}$/.test(birthYYMMDD || '')) return null;
     const yy = +birthYYMMDD.slice(0, 2);
@@ -60,183 +71,25 @@ const COL = 'obituaries';
     const a = calcKoreanAge(birthYYMMDD);
     return a != null ? `향년 ${a}세` : '';
   }
-
-  // ---------- Crypto helpers (Web Crypto API) ----------
-  const subtle = crypto.subtle;
-  const textEnc = new TextEncoder();
-  const textDec = new TextDecoder();
-
-  const bufToHex = (buf) => Array.from(new Uint8Array(buf))
-    .map(b => b.toString(16).padStart(2, '0')).join('');
-  const hexToBuf = (hex) => {
-    if (!hex) return new Uint8Array();
-    const out = new Uint8Array(hex.length / 2);
-    for (let i = 0; i < hex.length; i += 2) out[i/2] = parseInt(hex.slice(i, i+2), 16);
-    return out;
-  };
-  const randomHex = (bytes) => {
-    const a = new Uint8Array(bytes);
-    crypto.getRandomValues(a);
-    return bufToHex(a);
-  };
-
-  async function sha256Hex(text) {
-    const buf = await subtle.digest('SHA-256', textEnc.encode(String(text ?? '')));
-    return bufToHex(buf);
-  }
-  async function hashPassword(password, saltHex) {
-    const km = await subtle.importKey('raw', textEnc.encode(password || ''),
-      'PBKDF2', false, ['deriveBits']);
-    const bits = await subtle.deriveBits({
-      name: 'PBKDF2', salt: hexToBuf(saltHex), iterations: 100000, hash: 'SHA-256'
-    }, km, 256);
-    return bufToHex(bits);
-  }
-  async function deriveAesKey(password, saltHex) {
-    const km = await subtle.importKey('raw', textEnc.encode(password || ''),
-      'PBKDF2', false, ['deriveKey']);
-    return subtle.deriveKey({
-      name: 'PBKDF2', salt: hexToBuf(saltHex), iterations: 100000, hash: 'SHA-256'
-    }, km, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
-  }
-  async function encryptStr(plain, key) {
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const ct = await subtle.encrypt({ name: 'AES-GCM', iv }, key,
-      textEnc.encode(String(plain ?? '')));
-    return { iv: bufToHex(iv), ct: bufToHex(ct) };
-  }
-  async function decryptStr(obj, key) {
-    if (!obj || typeof obj !== 'object' || !obj.iv || !obj.ct) return '';
-    try {
-      const pt = await subtle.decrypt(
-        { name: 'AES-GCM', iv: hexToBuf(obj.iv) }, key, hexToBuf(obj.ct));
-      return textDec.decode(pt);
-    } catch { return ''; }
-  }
-
-  // ---------- Photo resize (keeps Firestore doc under 1MB) ----------
-  async function fileToResizedDataURL(file, maxSide = 800, quality = 0.8) {
-    const bitmap = await createImageBitmap(file);
-    let w = bitmap.width, h = bitmap.height;
-    if (w > maxSide || h > maxSide) {
-      const r = Math.min(maxSide / w, maxSide / h);
-      w = Math.round(w * r); h = Math.round(h * r);
+  // Render an <img> matching the editor's crop/scale/offset for a target box w×h
+  function photoCropImgHTML(ph, w, h) {
+    if (!ph?.photo) return '';
+    const nw = ph.photoNW || 0, nh = ph.photoNH || 0;
+    if (!nw || !nh) {
+      return `<img src="${escapeHtml(ph.photo)}" alt="영정" style="width:100%;height:100%;object-fit:cover;display:block;">`;
     }
-    const canvas = document.createElement('canvas');
-    canvas.width = w; canvas.height = h;
-    canvas.getContext('2d').drawImage(bitmap, 0, 0, w, h);
-    return canvas.toDataURL('image/jpeg', quality);
+    const imgRatio = nw / nh;
+    const cropRatio = w / h;
+    let baseW, baseH;
+    if (imgRatio > cropRatio) { baseH = h; baseW = h * imgRatio; }
+    else { baseW = w; baseH = w / imgRatio; }
+    const scale = ph.photoScale || 1;
+    const ox = (ph.photoOffsetXRel || 0) * w;
+    const oy = (ph.photoOffsetYRel || 0) * h;
+    return `<img src="${escapeHtml(ph.photo)}" alt="영정" style="position:absolute;top:50%;left:50%;width:${baseW}px;height:${baseH}px;max-width:none;transform:translate(calc(-50% + ${ox}px), calc(-50% + ${oy}px)) scale(${scale});transform-origin:center;display:block;">`;
   }
 
-  // ---------- Storage (Firestore) ----------
-  const storage = {
-    async list() {
-      const snap = await getDocs(query(collection(db, COL), orderBy('updatedAt', 'desc')));
-      return snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    },
-    async listByPhoneHash(phoneHash) {
-      const snap = await getDocs(query(
-        collection(db, COL),
-        where('author.phoneHash', '==', phoneHash),
-        orderBy('updatedAt', 'desc')
-      ));
-      return snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    },
-    async get(id) {
-      const s = await getDoc(doc(db, COL, id));
-      return s.exists() ? { id: s.id, ...s.data() } : null;
-    },
-    async upsertRaw(obit) {
-      const { id, ...rest } = obit;
-      await setDoc(doc(db, COL, id), rest, { merge: true });
-      return obit;
-    },
-    async remove(id) {
-      await deleteDoc(doc(db, COL, id));
-    },
-  };
-
-  // ---------- Session (holds password+phone in memory for decryption) ----------
-  const SESSION_KEY = 'mt.session.v2';
-  const session = {
-    get() { try { return JSON.parse(sessionStorage.getItem(SESSION_KEY)) || null; } catch { return null; } },
-    set(s) { sessionStorage.setItem(SESSION_KEY, JSON.stringify(s)); },
-    clear() { sessionStorage.removeItem(SESSION_KEY); }
-  };
-
-  // ---------- Encrypt/decrypt obituary ----------
-  async function prepareForSave(obit) {
-    const password = obit.password;
-    if (!/^\d{6}$/.test(password || '')) {
-      throw new Error('비밀번호는 6자리 숫자여야 합니다.');
-    }
-    const phoneDigits = (obit.author?.phone || '').replace(/\D/g, '');
-    const phoneHash = await sha256Hex(phoneDigits);
-    const passwordSalt = randomHex(16);
-    const keySalt = randomHex(16);
-    const passwordHash = await hashPassword(password, passwordSalt);
-    const aesKey = await deriveAesKey(password, keySalt);
-
-    const nameEnc     = await encryptStr(obit.author?.name || '', aesKey);
-    const phoneEnc    = await encryptStr(obit.author?.phone || '', aesKey);
-    const relationEnc = await encryptStr(obit.author?.relation || '', aesKey);
-
-    return {
-      id: obit.id,
-      status: obit.status || 'draft',
-      createdAt: obit.createdAt || new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      passwordSalt, keySalt, passwordHash,
-      author: { phoneHash, nameEnc, phoneEnc, relationEnc },
-      deceased: obit.deceased || {},
-      mourners: obit.mourners || [],
-      funeral: obit.funeral || {},
-      notice: obit.notice || '',
-      donations: obit.donations || [],
-      noDonation: !!obit.noDonation,
-      messagesEnabled: obit.messagesEnabled !== false,
-      messages: (obit.messages || []).map(m => ({
-        id: m.id, name: m.name, body: m.body,
-        passwordHash: m.passwordHash || null,
-        createdAt: m.createdAt,
-      })),
-    };
-  }
-
-  async function decryptObituary(stored, password) {
-    if (!stored) return stored;
-    if (!password || !stored.keySalt) return stored;
-    try {
-      const aesKey = await deriveAesKey(password, stored.keySalt);
-      const name = await decryptStr(stored.author?.nameEnc, aesKey);
-      const phone = await decryptStr(stored.author?.phoneEnc, aesKey);
-      const relation = await decryptStr(stored.author?.relationEnc, aesKey);
-      return {
-        ...stored,
-        password,
-        author: { ...(stored.author || {}), name, phone, relation },
-      };
-    } catch { return stored; }
-  }
-
-  async function verifyPassword(stored, password) {
-    if (!stored?.passwordSalt || !stored?.passwordHash) return false;
-    const h = await hashPassword(password, stored.passwordSalt);
-    return h === stored.passwordHash;
-  }
-
-  async function authenticate(phoneDigits, password) {
-    const phoneHash = await sha256Hex(phoneDigits);
-    const docs = await storage.listByPhoneHash(phoneHash);
-    for (const d of docs) {
-      if (await verifyPassword(d, password)) {
-        return { phoneDigits, password, phoneHash };
-      }
-    }
-    return null;
-  }
-
-  // ---------- Options ----------
+  // ---------- Options (bottom-sheet data) ----------
   const SEX_OPTIONS = ['남', '여'];
   const RELATION_OPTIONS = ['미지정', '남편', '배우자(처)', '아들', '며느리', '딸', '사위', '손자', '손녀', '부모', '형제', '자매', '친척', '기타'];
   const BANK_OPTIONS = [
@@ -250,26 +103,39 @@ const COL = 'obituaries';
   function newObituary() {
     return {
       id: uid(),
-      status: 'draft',
+      status: 'draft', // draft | published | ended
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       password: '',
+      // 고인 정보
       deceased: {
         name: '', sex: '', birth: '', death: '',
-        titles: [''], photo: '', photoBW: false,
+        titles: [''], // 직함 목록 (첫 행은 항상 유지)
+        photo: '', // dataURL
+        photoBW: false,
         showPhoto: true, showTitle: true,
       },
-      mourners: [{ relation: '', name: '' }],
+      // 상주 (첫 행은 필수)
+      mourners: [{ relation: '', name: '' }], // [{relation, name}]
+      // 장례 일정
       funeral: {
-        deathAt: '', encoffinAt: '', carryAt: '',
-        place: '', funeralHome: '', showAll: true,
+        deathAt: '', // 별세일시
+        encoffinAt: '',
+        carryAt: '',
+        place: '', // 장지
+        funeralHome: '', // 빈소
+        showAll: true,
       },
+      // 알리는 글
       notice: '',
-      donations: [{ relation: '', owner: '', bank: '', account: '' }],
-      noDonation: false,
+      // 마음을 전하는 곳 (계좌) - 첫 행은 대표 계좌(필수)
+      donations: [{ relation: '', owner: '', bank: '', account: '' }], // [{relation, owner, bank, account}]
+      noDonation: false, // 부조금을 받지 않겠습니다
+      // 작성자 정보
       author: { name: '', phone: '', relation: '' },
+      // 추모 메시지
       messagesEnabled: true,
-      messages: [],
+      messages: [], // [{id, name, body, password, createdAt}]
     };
   }
 
@@ -277,8 +143,8 @@ const COL = 'obituaries';
   const state = {
     route: 'landing',
     params: {},
-    draft: null,
-    activeObituaryId: null,
+    draft: null, // current editing obituary
+    activeObituaryId: null, // for menu actions
   };
 
   // ---------- Toast ----------
@@ -305,20 +171,13 @@ const COL = 'obituaries';
       `;
       modalEl.setAttribute('aria-hidden', 'false');
       modalPanel.querySelectorAll('button[data-i]').forEach((btn) => {
-        btn.addEventListener('click', async () => {
+        btn.addEventListener('click', () => {
           const i = +btn.dataset.i;
           const a = actions[i];
-          if (a.onClick) {
-            btn.disabled = true;
-            try {
-              const result = await a.onClick(modalPanel);
-              if (result === false) { btn.disabled = false; return; }
-            } catch (e) {
-              console.error(e);
-              toast('오류가 발생했습니다.');
-              btn.disabled = false;
-              return;
-            }
+          const onClick = a.onClick;
+          if (onClick) {
+            const result = onClick(modalPanel);
+            if (result === false) return;
           }
           modalEl.setAttribute('aria-hidden', 'true');
           resolve(a.value !== undefined ? a.value : i);
@@ -327,6 +186,15 @@ const COL = 'obituaries';
     });
   }
   modalEl.querySelector('.modal__backdrop').addEventListener('click', () => modalEl.setAttribute('aria-hidden', 'true'));
+
+  // ---------- Full popup ----------
+  const fullPopup = document.getElementById('fullPopup');
+  const fullPopupPanel = document.getElementById('fullPopupPanel');
+  function openFullPopup(html) {
+    fullPopupPanel.innerHTML = html;
+    fullPopup.setAttribute('aria-hidden', 'false');
+  }
+  function closeFullPopup() { fullPopup.setAttribute('aria-hidden', 'true'); }
 
   // ---------- Bottom sheet ----------
   const sheetEl = $('#bottomSheet'), sheetPanel = $('#bottomSheetPanel');
@@ -337,6 +205,7 @@ const COL = 'obituaries';
   function closeSheet() { sheetEl.setAttribute('aria-hidden', 'true'); }
   $('#bottomSheetBackdrop').addEventListener('click', closeSheet);
 
+  // Generic select-bottom-sheet
   function openSelectSheet({ title, options, value, layout = 'grid', onSelect }) {
     let selected = value ?? '';
     const optsHTML = () => layout === 'grid'
@@ -373,16 +242,203 @@ const COL = 'obituaries';
     });
   }
 
+  // ---------- Photo editor (full popup) ----------
+  function openPhotoEditor(initial, onDone) {
+    // local state
+    let dataUrl = initial?.photo || '';
+    let bw = !!initial?.bw;
+    let scale = initial?.scale || 1;
+    let offsetX = 0, offsetY = 0; // pixels for current crop area
+    let initOffsetsApplied = false;
+    const initRelX = +initial?.offsetXRel || 0;
+    const initRelY = +initial?.offsetYRel || 0;
+
+    const render = () => {
+      openFullPopup(`
+        <header class="fp-header fp-header--title-x">
+          <div class="fp-header__title">영정 사진 추가</div>
+          <button class="fp-header__close" id="fpClose" aria-label="닫기">×</button>
+        </header>
+        <div class="fp-body">
+          ${dataUrl ? `
+            <div class="photo-editor__stage ${bw ? 'is-bw' : ''}" id="peStage">
+              <img id="peImg" src="${dataUrl}" alt="영정사진" />
+              <div class="photo-editor__crop" id="peCrop">
+                <div class="photo-editor__grid"></div>
+              </div>
+            </div>
+            <div class="photo-editor__zoom">
+              <span style="font-size:16px;color:var(--c-text-3);">−</span>
+              <input id="peZoom" type="range" min="1" max="3" step="0.05" value="${scale}">
+              <span style="font-size:16px;color:var(--c-text-3);">+</span>
+            </div>
+            <div class="photo-editor__bw">
+              <span>흑백 모드</span>
+              <span class="toggle ${bw ? 'is-on' : ''}" id="peBW"></span>
+            </div>
+          ` : `
+            <div class="photo-editor__dropzone">
+              <button class="photo-upload__btn" id="peAdd">+ 영정 사진 추가</button>
+              <div class="hint">
+                이미지 파일(jpg, png)만 등록하실 수 있습니다.<br>
+                최대 20MB 까지 등록 가능합니다.
+              </div>
+            </div>
+          `}
+          <input type="file" id="peFile" accept="image/jpeg,image/png" hidden>
+        </div>
+        <div class="fp-footer">
+          <button class="btn btn--secondary" id="peReselect" ${dataUrl ? '' : 'disabled'}>다시 선택</button>
+          <button class="btn btn--primary" id="peDone" ${dataUrl ? '' : 'disabled'}>완료</button>
+        </div>
+      `);
+      wire();
+    };
+
+    const wire = () => {
+      const file = document.getElementById('peFile');
+      const triggerFile = () => file.click();
+      const addBtn = document.getElementById('peAdd');
+      if (addBtn) addBtn.addEventListener('click', openCombobox);
+      file.addEventListener('change', (e) => {
+        const f = e.target.files?.[0];
+        if (!f) return;
+        if (f.size > 20 * 1024 * 1024) return toast('파일 크기는 20MB 이하만 가능합니다.');
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          dataUrl = ev.target.result;
+          scale = 1; offsetX = 0; offsetY = 0;
+          // allow picking the same file next time
+          e.target.value = '';
+          render();
+        };
+        reader.readAsDataURL(f);
+      });
+      document.getElementById('fpClose')?.addEventListener('click', closeFullPopup);
+      document.getElementById('peReselect')?.addEventListener('click', openCombobox);
+      document.getElementById('peDone')?.addEventListener('click', () => {
+        const cropEl = document.getElementById('peCrop');
+        const r = cropEl ? cropEl.getBoundingClientRect() : { width: 0, height: 0 };
+        const offsetXRel = r.width > 0 ? offsetX / r.width : 0;
+        const offsetYRel = r.height > 0 ? offsetY / r.height : 0;
+        const imgEl = document.getElementById('peImg');
+        onDone({
+          photo: dataUrl, bw, scale,
+          offsetXRel, offsetYRel,
+          nw: imgEl?.naturalWidth || 0,
+          nh: imgEl?.naturalHeight || 0,
+        });
+        closeFullPopup();
+      });
+      const zoom = document.getElementById('peZoom');
+      const img = document.getElementById('peImg');
+      const stage = document.getElementById('peStage');
+      if (zoom && img && stage) {
+        const crop = document.getElementById('peCrop');
+        const apply = () => {
+          const r = crop.getBoundingClientRect();
+          const iw = img.naturalWidth || 0;
+          const ih = img.naturalHeight || 0;
+          if (!iw || !ih || !r.width || !r.height) return;
+          if (!initOffsetsApplied) {
+            offsetX = initRelX * r.width;
+            offsetY = initRelY * r.height;
+            initOffsetsApplied = true;
+          }
+          const imgRatio = iw / ih;
+          const cropRatio = r.width / r.height;
+          let baseW, baseH;
+          if (imgRatio > cropRatio) { baseH = r.height; baseW = r.height * imgRatio; }
+          else { baseW = r.width; baseH = r.width / imgRatio; }
+          img.style.width = baseW + 'px';
+          img.style.height = baseH + 'px';
+          const scaledW = baseW * scale;
+          const scaledH = baseH * scale;
+          const maxX = Math.max(0, (scaledW - r.width) / 2);
+          const maxY = Math.max(0, (scaledH - r.height) / 2);
+          offsetX = Math.max(-maxX, Math.min(maxX, offsetX));
+          offsetY = Math.max(-maxY, Math.min(maxY, offsetY));
+          img.style.transform = `translate(calc(-50% + ${offsetX}px), calc(-50% + ${offsetY}px)) scale(${scale})`;
+        };
+        if (img.complete && img.naturalWidth) apply();
+        else img.addEventListener('load', apply, { once: true });
+        zoom.addEventListener('input', () => { scale = +zoom.value; apply(); });
+
+        // drag
+        let dragging = false, startX = 0, startY = 0, startOX = 0, startOY = 0;
+        stage.addEventListener('pointerdown', (e) => {
+          dragging = true;
+          startX = e.clientX; startY = e.clientY;
+          startOX = offsetX; startOY = offsetY;
+          stage.classList.add('is-dragging');
+          try { stage.setPointerCapture(e.pointerId); } catch { }
+        });
+        stage.addEventListener('pointermove', (e) => {
+          if (!dragging) return;
+          offsetX = startOX + (e.clientX - startX);
+          offsetY = startOY + (e.clientY - startY);
+          apply();
+        });
+        const endDrag = (e) => {
+          if (!dragging) return;
+          dragging = false;
+          stage.classList.remove('is-dragging');
+          try { stage.releasePointerCapture(e.pointerId); } catch { }
+        };
+        stage.addEventListener('pointerup', endDrag);
+        stage.addEventListener('pointercancel', endDrag);
+        stage.addEventListener('pointerleave', endDrag);
+      }
+      const bwBtn = document.getElementById('peBW');
+      if (bwBtn) bwBtn.addEventListener('click', () => {
+        bw = !bw;
+        bwBtn.classList.toggle('is-on', bw);
+        document.getElementById('peStage').classList.toggle('is-bw', bw);
+      });
+    };
+
+    const openCombobox = () => {
+      openSheet(`
+        <div class="sheet-head">
+          <div class="sheet-title">영정 사진 추가</div>
+          <button class="sheet-close" id="ssClose" aria-label="닫기">×</button>
+        </div>
+        <div class="photo-combobox">
+          <button data-opt="library"><span>사진 보관함</span><span class="ico">🖼</span></button>
+          <button data-opt="camera"><span>사진 찍기</span><span class="ico">📷</span></button>
+          <button data-opt="file"><span>파일 선택</span><span class="ico">📁</span></button>
+        </div>
+      `);
+      document.getElementById('ssClose').addEventListener('click', closeSheet);
+      sheetPanel.querySelectorAll('[data-opt]').forEach(b => b.addEventListener('click', () => {
+        closeSheet();
+        const opt = b.dataset.opt;
+        const file = document.getElementById('peFile');
+        if (opt === 'camera') file.setAttribute('capture', 'environment');
+        else file.removeAttribute('capture');
+        file.click();
+      }));
+    };
+
+    render();
+  }
+
   // ---------- Slide menu ----------
   const slideMenu = $('#slideMenu');
-  const isSlideMenuOpen = () => slideMenu.getAttribute('aria-hidden') === 'false';
-  function openSlideMenu() { slideMenu.setAttribute('aria-hidden', 'false'); $('#headerMenu').setAttribute('aria-expanded', 'true'); }
-  function closeSlideMenu() { slideMenu.setAttribute('aria-hidden', 'true'); $('#headerMenu').setAttribute('aria-expanded', 'false'); }
+  function isSlideMenuOpen() { return slideMenu.getAttribute('aria-hidden') === 'false'; }
+  function openSlideMenu() {
+    slideMenu.setAttribute('aria-hidden', 'false');
+    $('#headerMenu').setAttribute('aria-expanded', 'true');
+  }
+  function closeSlideMenu() {
+    slideMenu.setAttribute('aria-hidden', 'true');
+    $('#headerMenu').setAttribute('aria-expanded', 'false');
+  }
   $('#slideMenuClose').addEventListener('click', closeSlideMenu);
   $('#slideMenuBackdrop').addEventListener('click', closeSlideMenu);
   $('#headerMenu').addEventListener('click', openSlideMenu);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && isSlideMenuOpen()) closeSlideMenu(); });
-  slideMenu.addEventListener('click', async (e) => {
+  slideMenu.addEventListener('click', (e) => {
     const item = e.target.closest('[data-action]');
     if (!item) return;
     const action = item.dataset.action;
@@ -390,14 +446,9 @@ const COL = 'obituaries';
     if (action === 'edit-obituary') {
       const id = state.activeObituaryId || $('#headerTitle').dataset.activeId;
       if (!id) return toast('수정할 부고장이 없습니다.');
-      askPassword(id, async (password) => {
-        const o = await storage.get(id);
-        const decrypted = await decryptObituary(o, password);
-        state.draft = JSON.parse(JSON.stringify(decrypted));
-        navigate('edit', { id });
-      });
+      askPassword(id, () => navigate('edit', { id }));
     } else if (action === 'my-obituaries') {
-      openMyObituariesAuthSheet();
+      navigate('my');
     } else if (action === 'privacy') {
       navigate('privacy');
     } else if (action === 'terms') {
@@ -405,32 +456,27 @@ const COL = 'obituaries';
     }
   });
 
-  // ---------- Password gate (verify + return password to caller) ----------
-  async function askPassword(id, onOk) {
-    const obit = await storage.get(id);
+  // ---------- Password gate ----------
+  function askPassword(id, onOk) {
+    const obit = storage.get(id);
     if (!obit) return toast('부고장을 찾을 수 없습니다.');
-    const res = await openModal({
+    openModal({
       title: '비밀번호 확인',
       desc: '부고장 작성 시 설정한 6자리 숫자를 입력해주세요.',
       body: `<div class="field"><input type="password" inputmode="numeric" maxlength="6" class="input" id="modalPw" placeholder="••••••" autocomplete="off"></div>`,
       actions: [
         { label: '취소' },
-        { label: '확인', primary: true, onClick: async (panel) => {
+        {
+          label: '확인', primary: true, onClick: (panel) => {
             const v = panel.querySelector('#modalPw').value;
-            const ok = await verifyPassword(obit, v);
-            if (!ok) { toast('비밀번호가 일치하지 않습니다.'); return false; }
-            // stash in session for subsequent decryption
-            const phoneDigits = (await decryptObituary(obit, v)).author?.phone?.replace(/\D/g, '') || '';
-            const phoneHash = await sha256Hex(phoneDigits);
-            session.set({ phoneDigits, password: v, phoneHash });
+            if (v !== obit.password) {
+              toast('비밀번호가 일치하지 않습니다.');
+              return false;
+            }
           }
         }
       ]
-    });
-    if (res === 1) {
-      const s = session.get();
-      onOk(s?.password);
-    }
+    }).then((res) => { if (res === 1) onOk(); });
   }
 
   // ---------- Routing ----------
@@ -448,6 +494,7 @@ const COL = 'obituaries';
     $('#headerMenu').style.display = menu ? '' : 'none';
   }
   $('#headerBack').addEventListener('click', () => {
+    // simple back logic
     if (state.route === 'create' || state.route === 'edit') {
       if (state.draft && hasUnsavedChanges()) {
         openModal({
@@ -512,132 +559,20 @@ const COL = 'obituaries';
         </div>
       </section>
     `;
-    $('#btnMy').addEventListener('click', () => openMyObituariesAuthSheet());
+    $('#btnMy').addEventListener('click', () => navigate('my'));
     $('#btnCreate').addEventListener('click', () => { state.draft = newObituary(); navigate('create'); });
   }
 
-  // ---------- '나의 부고장 관리' 인증 바텀시트 ----------
-  function formatPhoneKR(v) {
-    const d = (v || '').replace(/\D/g, '').slice(0, 11);
-    if (d.length < 4) return d;
-    if (d.length < 7) return d.slice(0, 3) + '-' + d.slice(3);
-    if (d.length <= 10) return d.slice(0, 3) + '-' + d.slice(3, 6) + '-' + d.slice(6);
-    return d.slice(0, 3) + '-' + d.slice(3, 7) + '-' + d.slice(7);
-  }
-
-  function openMyObituariesAuthSheet() {
-    openSheet(`
-      <div class="sheet-head">
-        <div class="sheet-title">나의 부고장 관리</div>
-        <button class="sheet-close" id="myAuthClose" aria-label="닫기">×</button>
-      </div>
-      <div class="field">
-        <input class="input" id="myAuthPhone" type="tel" inputmode="numeric"
-          maxlength="13" autocomplete="off" placeholder="휴대폰 번호 *" />
-      </div>
-      <div class="field" style="margin-bottom:8px;">
-        <input class="input" id="myAuthPw" type="password" inputmode="numeric"
-          maxlength="6" autocomplete="off" placeholder="비밀번호 6자리 *" />
-        <div class="field__hint field__hint--error" id="myAuthErr" style="display:none;">
-          휴대폰 번호 또는 비밀번호가 일치하지 않습니다.
-        </div>
-      </div>
-      <div class="sheet-confirm">
-        <button class="btn btn--primary btn--block" id="myAuthConfirm" disabled>확인</button>
-      </div>
-    `);
-
-    const phoneEl = $('#myAuthPhone');
-    const pwEl = $('#myAuthPw');
-    const confirmBtn = $('#myAuthConfirm');
-    const errEl = $('#myAuthErr');
-
-    const rawPhone = () => phoneEl.value.replace(/\D/g, '');
-    const clearError = () => {
-      errEl.style.display = 'none';
-      phoneEl.classList.remove('is-error');
-      pwEl.classList.remove('is-error');
-    };
-    const updateState = () => {
-      const len = rawPhone().length;
-      const phoneOk = len === 10 || len === 11;
-      const pwOk = /^\d{6}$/.test(pwEl.value);
-      confirmBtn.disabled = !(phoneOk && pwOk);
-    };
-
-    phoneEl.addEventListener('input', () => {
-      phoneEl.value = formatPhoneKR(phoneEl.value);
-      clearError(); updateState();
-    });
-    pwEl.addEventListener('input', () => {
-      pwEl.value = pwEl.value.replace(/\D/g, '').slice(0, 6);
-      clearError(); updateState();
-    });
-
-    const submit = async () => {
-      if (confirmBtn.disabled) return;
-      confirmBtn.disabled = true;
-      confirmBtn.textContent = '확인 중...';
-      try {
-        const result = await authenticate(rawPhone(), pwEl.value);
-        if (!result) {
-          errEl.style.display = 'block';
-          phoneEl.classList.add('is-error');
-          pwEl.classList.add('is-error');
-          confirmBtn.disabled = false;
-          confirmBtn.textContent = '확인';
-          return;
-        }
-        session.set(result);
-        closeSheet();
-        navigate('my');
-      } catch (e) {
-        console.error(e);
-        toast('오류가 발생했습니다. 네트워크를 확인해주세요.');
-        confirmBtn.disabled = false;
-        confirmBtn.textContent = '확인';
-      }
-    };
-
-    confirmBtn.addEventListener('click', submit);
-    pwEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
-    $('#myAuthClose').addEventListener('click', closeSheet);
-    setTimeout(() => phoneEl.focus(), 50);
-  }
-
   // ---------- My obituaries ----------
-  async function renderMyObituaries() {
+  function renderMyObituaries() {
     setHeader({ title: '나의 부고장 관리', back: true, menu: false });
-    viewEl.innerHTML = `<div class="list"><div class="list__empty">불러오는 중...</div></div>`;
-
-    const s = session.get();
-    if (!s) {
-      viewEl.innerHTML = `
-        <div class="list"><div class="list__empty">로그인이 필요합니다.</div></div>
-        <div class="bottom-cta"><button class="btn btn--primary btn--block" id="btnToLanding">메인으로</button></div>
-      `;
-      $('#btnToLanding').addEventListener('click', () => navigate('landing'));
-      return;
-    }
-
-    let list = [];
-    try {
-      const docs = await storage.listByPhoneHash(s.phoneHash);
-      // 같은 phoneHash 안에서도 비밀번호가 일치하는 항목만 포함 (안전)
-      for (const d of docs) {
-        if (await verifyPassword(d, s.password)) list.push(d);
-      }
-    } catch (e) {
-      console.error(e);
-      toast('목록을 불러오지 못했습니다.');
-    }
-
+    const list = storage.list();
     viewEl.innerHTML = `
       <div class="list">
         ${list.length === 0
-          ? `<div class="list__empty">아직 작성한 부고장이 없습니다.</div>`
-          : list.map(renderListCard).join('')
-        }
+        ? `<div class="list__empty">아직 작성한 부고장이 없습니다.</div>`
+        : list.map(renderListCard).join('')
+      }
       </div>
       <div class="bottom-cta">
         <button class="btn btn--primary btn--block" id="btnNew">부고장 만들기</button>
@@ -645,7 +580,7 @@ const COL = 'obituaries';
     `;
     $('#btnNew').addEventListener('click', () => { state.draft = newObituary(); navigate('create'); });
 
-    viewEl.addEventListener('click', async (e) => {
+    viewEl.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-act]');
       if (!btn) return;
       const id = btn.closest('.list__card').dataset.id;
@@ -653,47 +588,32 @@ const COL = 'obituaries';
       if (act === 'view') navigate('detail', { id });
       else if (act === 'share') openShareSheet(id);
       else if (act === 'continue') {
-        try {
-          const obit = await storage.get(id);
-          if (!obit) return;
-          const decrypted = await decryptObituary(obit, s.password);
-          state.draft = JSON.parse(JSON.stringify(decrypted));
-          navigate('edit', { id });
-        } catch (err) {
-          console.error(err);
-          toast('불러오지 못했습니다.');
-        }
+        const obit = storage.get(id);
+        if (obit) { state.draft = JSON.parse(JSON.stringify(obit)); navigate('edit', { id }); }
       } else if (act === 'delete') {
-        askPassword(id, async () => {
-          const v = await openModal({
+        askPassword(id, () => {
+          openModal({
             title: '부고장을 삭제하시겠습니까?',
             desc: '삭제된 부고장은 복구할 수 없습니다.',
             actions: [
               { label: '취소' },
               { label: '삭제하기', primary: true, value: 'del' },
             ]
-          });
-          if (v === 'del') {
-            try {
-              await storage.remove(id);
-              toast('부고장이 삭제되었습니다.');
-              renderMyObituaries();
-            } catch (err) { console.error(err); toast('삭제에 실패했습니다.'); }
-          }
+          }).then((v) => { if (v === 'del') { storage.remove(id); toast('부고장이 삭제되었습니다.'); renderMyObituaries(); } });
         });
       }
     });
   }
   function renderListCard(o) {
-    const d = o.deceased || {};
+    const d = o.deceased;
     const isDraft = o.status === 'draft';
     const isEnded = o.status === 'ended';
     const statusLabel = isDraft ? '임시저장' : (isEnded ? '장례 종료' : '장례 중');
     const statusClass = isDraft ? 'list__status--draft' : (isEnded ? 'list__status--ended' : '');
     const meta = isDraft
-      ? `<div class="list__meta"><span class="label">임시저장</span>${fmtDate((o.updatedAt||'').slice(0,10))}</div>`
+      ? `<div class="list__meta"><span class="label">임시저장</span>${fmtDate(o.updatedAt.slice(0, 10))}</div>`
       : `<div class="list__meta">
-            <span class="label">별세일</span>${fmtDate((o.funeral?.deathAt||'').slice(0,10) || d.death)}
+            <span class="label">별세일</span>${fmtDate(o.funeral.deathAt?.slice(0, 10) || d.death)}
          </div>`;
     const actions = isDraft
       ? `<button class="list__btn" data-act="delete">삭제하기</button>
@@ -713,13 +633,11 @@ const COL = 'obituaries';
   }
 
   // ---------- Editor (create / edit) ----------
-  async function renderEditor() {
+  function renderEditor() {
     if (state.route === 'edit' && (!state.draft || state.draft.id !== state.params.id)) {
-      const s = session.get();
-      const o = await storage.get(state.params.id);
-      if (!o) { toast('부고장을 찾을 수 없습니다.'); navigate('landing'); return; }
-      const decrypted = s ? await decryptObituary(o, s.password) : o;
-      state.draft = JSON.parse(JSON.stringify(decrypted));
+      const o = storage.get(state.params.id);
+      if (!o) { navigate('landing'); return; }
+      state.draft = JSON.parse(JSON.stringify(o));
     }
     if (!state.draft) state.draft = newObituary();
     if (!state.draft.mourners || state.draft.mourners.length === 0) {
@@ -729,6 +647,7 @@ const COL = 'obituaries';
       state.draft.donations = [{ owner: '', bank: '', account: '' }];
     }
     if (!state.draft.deceased.titles || state.draft.deceased.titles.length === 0) {
+      // migrate legacy fields if present
       const legacy = [state.draft.deceased.title, state.draft.deceased.roles]
         .filter(Boolean).join('\n').split('\n').filter(Boolean);
       state.draft.deceased.titles = legacy.length ? legacy : [''];
@@ -744,6 +663,7 @@ const COL = 'obituaries';
       <div class="create-page">
         <div class="builder-notice"><span class="req">*</span> 표시는 필수 입력 항목입니다. 꼭 입력해주세요.</div>
 
+        <!-- 고인 정보 -->
         <section class="section">
           <div class="section__head">
             <div class="section__title"><span class="icon-bullet">⚘</span>고인 정보</div>
@@ -755,7 +675,7 @@ const COL = 'obituaries';
           <div class="field">
             <label class="field__label">생년월일</label>
             <div style="display:grid;grid-template-columns:3fr 1fr;gap:8px;">
-              <input class="input" id="birthInput" data-bind="deceased.birth" value="${escapeHtml(d.deceased.birth||'')}" placeholder="예)810910" inputmode="numeric" maxlength="6" />
+              <input class="input" id="birthInput" data-bind="deceased.birth" value="${escapeHtml(d.deceased.birth || '')}" placeholder="예)810910" inputmode="numeric" maxlength="6" />
               <input class="input" id="ageInput" value="${ageDisplay(d.deceased.birth)}" placeholder="향년" disabled />
             </div>
             <div class="field__hint">* 입력 시 향년 나이를 자동 계산합니다</div>
@@ -770,26 +690,27 @@ const COL = 'obituaries';
           <div class="field">
             <label class="field__label">영정 사진 (선택)</label>
             ${d.deceased.photo ? `
-              <div class="photo-preview ${d.deceased.photoBW?'is-bw':''}">
-                <img src="${d.deceased.photo}" alt="영정사진" />
-              </div>
-              <div class="photo-controls">
-                <label class="toggle-row">
-                  <span>흑백 모드</span>
-                  <span class="toggle ${d.deceased.photoBW?'is-on':''}" data-toggle="deceased.photoBW"></span>
-                </label>
-                <button class="btn btn--secondary" id="rePhoto" style="height:36px;padding:0 12px;">다시 선택</button>
+              <div class="photo-filled ${d.deceased.photoBW ? 'is-bw' : ''}">
+                <div class="photo-filled__thumb">${photoCropImgHTML(d.deceased, 96, 120)}</div>
+                <div class="photo-filled__meta">
+                  <div class="title">영정 사진 등록 완료</div>
+                  <div>${d.deceased.photoBW ? '흑백 모드' : '컬러'} · 확대 ${Number(d.deceased.photoScale || 1).toFixed(2)}x</div>
+                  <div class="photo-filled__actions">
+                    <button type="button" class="btn btn--secondary" id="editPhoto">편집하기</button>
+                    <button type="button" class="btn btn--secondary" id="removePhoto">삭제</button>
+                  </div>
+                </div>
               </div>
             ` : `
               <div class="photo-upload">
-                <button class="photo-upload__btn" id="addPhoto">+ 영정 사진 추가</button>
-                <div class="photo-upload__hint">이미지 파일(jpg, png) · 자동 리사이즈</div>
+                <button type="button" class="photo-upload__btn" id="addPhoto">+ 영정 사진 추가</button>
+                <div class="photo-upload__hint">이미지 파일(jpg, png) · 최대 20MB</div>
               </div>
             `}
-            <input type="file" id="photoInput" accept="image/jpeg,image/png" hidden />
           </div>
         </section>
 
+        <!-- 상주 정보 -->
         <section class="section">
           <div class="section__head">
             <div class="section__title"><span class="icon-bullet">⚘</span>상주 정보</div>
@@ -800,6 +721,7 @@ const COL = 'obituaries';
           </div>
         </section>
 
+        <!-- 장례 일정 -->
         <section class="section">
           <div class="section__head">
             <div class="section__title"><span class="icon-bullet">⚘</span>장례 일정</div>
@@ -828,6 +750,7 @@ const COL = 'obituaries';
           </div>
         </section>
 
+        <!-- 알리는 글 -->
         <section class="section">
           <div class="section__head">
             <div class="section__title"><span class="icon-bullet">⚘</span>알리는 글</div>
@@ -835,10 +758,11 @@ const COL = 'obituaries';
           </div>
           <div class="field">
             <textarea class="textarea" maxlength="500" data-bind="notice" placeholder="황망한 마음에 일일이 직접 연락드리지 못함을 널리 헤아려주시기 바랍니다.">${escapeHtml(d.notice)}</textarea>
-            <div class="field__counter"><span id="noticeCount">${(d.notice||'').length}</span>/500</div>
+            <div class="field__counter"><span id="noticeCount">${(d.notice || '').length}</span>/500</div>
           </div>
         </section>
 
+        <!-- 마음을 전하는 곳 -->
         <section class="section">
           <div class="section__head">
             <div class="section__title"><span class="icon-bullet">⚘</span>마음을 전하는 곳</div>
@@ -854,6 +778,7 @@ const COL = 'obituaries';
           </label>
         </section>
 
+        <!-- 작성자 정보 -->
         <section class="section">
           <div class="section__head">
             <div class="section__title"><span class="icon-bullet">⚘</span>작성자 정보</div>
@@ -872,14 +797,16 @@ const COL = 'obituaries';
           </div>
         </section>
 
+        <!-- 메시지 받기 -->
         <section class="section">
           <div class="section__head">
             <div class="section__title"><span class="icon-bullet">⚘</span>추모 메시지 받기</div>
-            <span class="toggle ${d.messagesEnabled?'is-on':''}" data-toggle="messagesEnabled"></span>
+            <span class="toggle ${d.messagesEnabled ? 'is-on' : ''}" data-toggle="messagesEnabled"></span>
           </div>
           <div class="muted" style="font-size:12px;">조문객들에게 추모 메시지를 받을 수 있어요.</div>
         </section>
 
+        <!-- 비밀번호 -->
         <section class="section">
           <div class="section__head">
             <div class="section__title"><span class="icon-bullet">🔒</span>부고장 비밀번호<span class="req">*</span></div>
@@ -909,12 +836,14 @@ const COL = 'obituaries';
   }
 
   function titleRow(value, i, total) {
+    // show trash when: (i > 0) OR (only row AND has value)
     const hasValue = !!(value && value.trim());
     const showTrash = (total > 1 && i > 0) || (total === 1 && hasValue);
+    const cols = showTrash ? '1fr auto' : '1fr';
     return `
-      <div class="field-row" data-row="title" data-i="${i}" style="grid-template-columns:1fr auto;gap:6px;margin-bottom:8px;">
-        <input class="input" data-bind-arr="deceased.titles.${i}" data-title-input="${i}" value="${escapeHtml(value||'')}" placeholder="직함을 입력해 주세요" />
-        ${showTrash ? `<button class="btn--icon" data-remove="title" data-i="${i}" aria-label="삭제">🗑</button>` : `<span style="width:36px;"></span>`}
+      <div class="field-row" data-row="title" data-i="${i}" style="grid-template-columns:${cols};gap:6px;margin-bottom:8px;">
+        <input class="input" data-bind-arr="deceased.titles.${i}" data-title-input="${i}" value="${escapeHtml(value || '')}" placeholder="직함을 입력해 주세요" />
+        ${showTrash ? `<button class="btn--icon" data-remove="title" data-i="${i}" aria-label="삭제">🗑</button>` : ''}
       </div>
     `;
   }
@@ -929,7 +858,7 @@ const COL = 'obituaries';
           <span>${escapeHtml(relLabel)}</span><span class="chev">▾</span>
         </button>
         <div style="display:flex;gap:6px;">
-          <input class="input" style="flex:1;" data-bind-arr="mourners.${i}.name" value="${escapeHtml(m.name||'')}" placeholder="${namePlaceholder}" ${isFirst ? 'required' : ''} />
+          <input class="input" style="flex:1;" data-bind-arr="mourners.${i}.name" value="${escapeHtml(m.name || '')}" placeholder="${namePlaceholder}" ${isFirst ? 'required' : ''} />
           ${isFirst ? '' : `<button class="btn--icon" data-remove="mourner" data-i="${i}" aria-label="삭제">🗑</button>`}
         </div>
       </div>
@@ -949,13 +878,13 @@ const COL = 'obituaries';
           <button type="button" class="select-trigger ${x.relation ? '' : 'is-placeholder'}" data-pick="donation-rel" data-i="${i}">
             <span>${escapeHtml(x.relation || '관계*')}</span><span class="chev">▾</span>
           </button>
-          <input class="input" data-bind-arr="donations.${i}.owner" value="${escapeHtml(x.owner||'')}" placeholder="예금주*" required />
+          <input class="input" data-bind-arr="donations.${i}.owner" value="${escapeHtml(x.owner || '')}" placeholder="예금주*" required />
         </div>
         <div class="field-row" style="margin-top:6px;">
           <button type="button" class="select-trigger ${x.bank ? '' : 'is-placeholder'}" data-pick="bank" data-i="${i}">
             <span>${escapeHtml(x.bank || '은행*')}</span><span class="chev">▾</span>
           </button>
-          <input class="input" data-bind-arr="donations.${i}.account" value="${escapeHtml(x.account||'')}" placeholder="계좌번호*" inputmode="numeric" required />
+          <input class="input" data-bind-arr="donations.${i}.account" value="${escapeHtml(x.account || '')}" placeholder="계좌번호*" inputmode="numeric" required />
         </div>
       </div>
     `;
@@ -964,6 +893,7 @@ const COL = 'obituaries';
   function bindEditor() {
     const d = state.draft;
 
+    // bind inputs
     viewEl.querySelectorAll('[data-bind]').forEach((el) => {
       el.addEventListener('input', () => {
         if (el.dataset.bind === 'deceased.birth') {
@@ -971,11 +901,9 @@ const COL = 'obituaries';
           const ageEl = $('#ageInput');
           if (ageEl) ageEl.value = ageDisplay(el.value);
         }
-        if (el.dataset.bind === 'password') {
-          el.value = (el.value || '').replace(/\D/g, '').slice(0, 6);
-        }
         setByPath(d, el.dataset.bind, el.value);
         if (el.dataset.bind === 'notice') $('#noticeCount').textContent = el.value.length;
+        updateCTAState();
       });
     });
     viewEl.querySelectorAll('[data-bind-arr]').forEach((el) => {
@@ -984,7 +912,7 @@ const COL = 'obituaries';
         if (el.dataset.titleInput !== undefined) refreshTitles();
       });
     });
-
+    // Bottom-sheet pickers
     viewEl.querySelectorAll('[data-pick]').forEach((el) => {
       el.addEventListener('click', () => {
         const kind = el.dataset.pick;
@@ -1028,22 +956,46 @@ const COL = 'obituaries';
       });
     });
 
-    // photo (auto-resize before saving)
+    // photo: open full popup editor
+    const openEditor = () => openPhotoEditor(
+      {
+        photo: d.deceased.photo,
+        bw: d.deceased.photoBW,
+        scale: d.deceased.photoScale,
+        offsetXRel: d.deceased.photoOffsetXRel,
+        offsetYRel: d.deceased.photoOffsetYRel,
+      },
+      (result) => {
+        d.deceased.photo = result.photo || '';
+        d.deceased.photoBW = !!result.bw;
+        d.deceased.photoScale = result.scale || 1;
+        d.deceased.photoOffsetXRel = result.offsetXRel || 0;
+        d.deceased.photoOffsetYRel = result.offsetYRel || 0;
+        d.deceased.photoNW = result.nw || 0;
+        d.deceased.photoNH = result.nh || 0;
+        renderEditor();
+      }
+    );
+    $('#addPhoto')?.addEventListener('click', openEditor);
+    $('#editPhoto')?.addEventListener('click', openEditor);
+    $('#removePhoto')?.addEventListener('click', () => {
+      d.deceased.photo = '';
+      d.deceased.photoBW = false;
+      d.deceased.photoScale = 1;
+      renderEditor();
+    });
+    // legacy file input path (safe no-op if element not present)
     const photoInput = $('#photoInput');
-    const trigger = () => photoInput.click();
-    $('#addPhoto')?.addEventListener('click', trigger);
-    $('#rePhoto')?.addEventListener('click', trigger);
-    photoInput?.addEventListener('change', async (e) => {
+    photoInput?.addEventListener('change', (e) => {
       const file = e.target.files[0];
       if (!file) return;
       if (file.size > 20 * 1024 * 1024) return toast('파일 크기는 20MB 이하만 가능합니다.');
-      try {
-        d.deceased.photo = await fileToResizedDataURL(file, 800, 0.8);
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        d.deceased.photo = ev.target.result;
         renderEditor();
-      } catch (err) {
-        console.error(err);
-        toast('이미지 처리 중 오류가 발생했습니다.');
-      }
+      };
+      reader.readAsDataURL(file);
     });
 
     // titles (직함)
@@ -1051,10 +1003,12 @@ const COL = 'obituaries';
       const list = d.deceased.titles || [''];
       const host = $('#titlesList');
       if (!host) return;
+      // preserve focus
       const active = document.activeElement;
       const focusIdx = active?.dataset?.titleInput;
       const caret = active?.selectionStart;
       host.innerHTML = list.map((t, i, arr) => titleRow(t, i, arr.length)).join('');
+      // rebind only the new rows
       host.querySelectorAll('[data-bind-arr]').forEach((el) => {
         el.addEventListener('input', () => {
           setByPath(d, el.dataset.bindArr, el.value);
@@ -1069,9 +1023,10 @@ const COL = 'obituaries';
           refreshTitles();
         });
       });
+      // restore focus
       if (focusIdx !== undefined) {
         const next = host.querySelector(`[data-title-input="${focusIdx}"]`);
-        if (next) { next.focus(); try { next.setSelectionRange(caret, caret); } catch {} }
+        if (next) { next.focus(); try { next.setSelectionRange(caret, caret); } catch { } }
       }
     };
     $('#addTitle')?.addEventListener('click', () => {
@@ -1114,37 +1069,19 @@ const COL = 'obituaries';
     });
 
     // CTA
-    $('#btnSaveDraft').addEventListener('click', () => saveObituary('draft'));
-    $('#btnPreview').addEventListener('click', () => {
-      const err = validateForPreview(d);
-      if (err) return toast(err);
-      navigate('preview');
-    });
-  }
-
-  async function saveObituary(status) {
-    const d = state.draft;
-    if (!/^\d{6}$/.test(d.password || '')) return toast('비밀번호는 6자리 숫자로 입력해주세요.');
-    const btn = $('#btnSaveDraft');
-    if (btn) { btn.disabled = true; btn.textContent = '저장 중...'; }
-    try {
-      d.status = status;
-      const payload = await prepareForSave(d);
-      await storage.upsertRaw(payload);
-      // session 동기화
-      const phoneDigits = (d.author?.phone || '').replace(/\D/g, '');
-      const phoneHash = await sha256Hex(phoneDigits);
-      session.set({ phoneDigits, password: d.password, phoneHash });
+    $('#btnSaveDraft').addEventListener('click', () => {
+      d.status = 'draft';
+      d.updatedAt = new Date().toISOString();
+      storage.upsert(d);
       toast('저장되었습니다.');
       navigate('my');
-    } catch (e) {
-      console.error(e);
-      toast(e.message || '저장에 실패했습니다.');
-      if (btn) { btn.disabled = false; btn.textContent = '임시저장'; }
-    }
+    });
+    $('#btnPreview').addEventListener('click', () => navigate('preview'));
   }
 
-  function validateForPreview(d) {
+  function updateCTAState() { /* preview button always enabled */ }
+
+  function validate(d) {
     if (!d.deceased.name?.trim()) return '필수항목을 다시 확인해주세요.';
     if (!d.funeral.deathAt) return '필수항목을 다시 확인해주세요.';
     if (!d.author.name?.trim()) return '필수항목을 다시 확인해주세요.';
@@ -1158,7 +1095,7 @@ const COL = 'obituaries';
     const keys = p.split('.');
     let cur = o;
     for (let i = 0; i < keys.length - 1; i++) {
-      const k = keys[i]; const nk = keys[i+1];
+      const k = keys[i]; const nk = keys[i + 1];
       if (!(k in cur)) cur[k] = /^\d+$/.test(nk) ? [] : {};
       cur = cur[k];
     }
@@ -1177,34 +1114,20 @@ const COL = 'obituaries';
       </div>
     `);
     $('#btnEdit').addEventListener('click', () => navigate('create'));
-    $('#btnPublish').addEventListener('click', async () => {
-      const btn = $('#btnPublish');
-      btn.disabled = true; btn.textContent = '등록 중...';
-      try {
-        d.status = 'published';
-        const payload = await prepareForSave(d);
-        await storage.upsertRaw(payload);
-        const phoneDigits = (d.author?.phone || '').replace(/\D/g, '');
-        const phoneHash = await sha256Hex(phoneDigits);
-        session.set({ phoneDigits, password: d.password, phoneHash });
-        toast('부고장 링크가 복사되었습니다.');
-        try { navigator.clipboard?.writeText(`${location.href.split('#')[0]}#detail/${d.id}`); } catch {}
-        navigate('detail', { id: d.id });
-      } catch (e) {
-        console.error(e);
-        toast(e.message || '등록에 실패했습니다.');
-        btn.disabled = false; btn.textContent = '등록하기';
-      }
+    $('#btnPublish').addEventListener('click', () => {
+      d.status = 'published';
+      d.updatedAt = new Date().toISOString();
+      storage.upsert(d);
+      toast('부고장 링크가 복사되었습니다.');
+      try { navigator.clipboard?.writeText(`${location.href.split('#')[0]}#detail/${d.id}`); } catch { }
+      navigate('detail', { id: d.id });
     });
   }
 
-  // ---------- Detail ----------
-  async function renderDetail() {
+  // ---------- Detail (recipient view) ----------
+  function renderDetail() {
     const id = state.params.id;
-    viewEl.innerHTML = `<div class="list"><div class="list__empty">불러오는 중...</div></div>`;
-    let o;
-    try { o = await storage.get(id); }
-    catch (e) { console.error(e); toast('부고장을 불러오지 못했습니다.'); return navigate('landing'); }
+    const o = storage.get(id);
     if (!o) { toast('부고장을 찾을 수 없습니다.'); return navigate('landing'); }
     state.activeObituaryId = id;
     setHeader({ title: '부고장', back: true, menu: true, activeId: id });
@@ -1223,15 +1146,12 @@ const COL = 'obituaries';
   }
 
   function obituaryHTML(o, { preview }) {
-    const d = o.deceased || {};
-    const f = o.funeral || {};
-    const mourners = o.mourners || [];
-    const donations = o.donations || [];
-    const messages = o.messages || [];
+    const d = o.deceased;
+    const f = o.funeral;
     const headTitle = d.name ? `삼가 ${escapeHtml(d.name)}님의<br>명복을 빕니다.` : '삼가 고인의<br>명복을 빕니다.';
 
     const photoBlock = d.showPhoto && d.photo
-      ? `<div class="deceased__photo ${d.photoBW?'is-bw':''}"><img src="${d.photo}" alt="영정"></div>`
+      ? `<div class="deceased__photo ${d.photoBW ? 'is-bw' : ''}">${photoCropImgHTML(d, 80, 100)}</div>`
       : `<div class="deceased__photo" style="display:flex;align-items:center;justify-content:center;color:#bbb;">⚘</div>`;
 
     return `
@@ -1239,7 +1159,7 @@ const COL = 'obituaries';
         <header class="obituary__hero">
           <div class="ribbon">⚘</div>
           <div class="head-title">${headTitle}</div>
-          <div class="head-sub">${fmtDate((f.deathAt||'').slice(0,10) || d.death)} 별세</div>
+          <div class="head-sub">${fmtDate(f.deathAt?.slice(0, 10) || d.death)} 별세</div>
         </header>
         <div class="obituary__body">
 
@@ -1250,30 +1170,30 @@ const COL = 'obituaries';
               <div>
                 <div class="deceased__name">故 ${escapeHtml(d.name || '')}님</div>
                 <div class="deceased__meta">
-                  ${[fmtDate((f.deathAt||'').slice(0,10) || d.death) + ' 별세', ageDisplay(d.birth)]
-                    .filter(Boolean).join(' · ')}
+                  ${[fmtDate(f.deathAt?.slice(0, 10) || d.death) + ' 별세', ageDisplay(d.birth)]
+        .filter(Boolean).join(' · ')}
                 </div>
-                ${d.showTitle && (d.titles || []).some(t => t && t.trim()) ? `<div class="deceased__roles">${(d.titles||[]).filter(t => t && t.trim()).map(escapeHtml).join('<br>')}</div>` : ''}
+                ${d.showTitle && (d.titles || []).some(t => t && t.trim()) ? `<div class="deceased__roles">${(d.titles || []).filter(t => t && t.trim()).map(escapeHtml).join('<br>')}</div>` : ''}
               </div>
             </div>
           </section>
 
-          ${mourners.length ? `
+          ${o.mourners.length ? `
             <section class="card">
               <div class="card__title"><span class="ico">⚘</span>상주</div>
               <dl class="def-list">
-                ${mourners.map(m => `<div class="row"><dt>${escapeHtml(m.relation || '')}</dt><dd>${escapeHtml(m.name || '')}</dd></div>`).join('')}
+                ${o.mourners.map(m => `<div class="row"><dt>${escapeHtml(m.relation || '')}</dt><dd>${escapeHtml(m.name || '')}</dd></div>`).join('')}
               </dl>
             </section>
-          `:''}
+          `: ''}
 
           <section class="card">
             <div class="card__title"><span class="ico">⚘</span>장례 일정</div>
             <dl class="def-list">
               <div class="row"><dt>별세일</dt><dd>${fmtDateTime(f.deathAt)}</dd></div>
-              ${f.encoffinAt ? `<div class="row"><dt>입관일시</dt><dd>${fmtDateTime(f.encoffinAt)}</dd></div>`:''}
-              ${f.carryAt ? `<div class="row"><dt>발인일시</dt><dd>${fmtDateTime(f.carryAt)}</dd></div>`:''}
-              ${f.place ? `<div class="row"><dt>장지</dt><dd>${escapeHtml(f.place)}</dd></div>`:''}
+              ${f.encoffinAt ? `<div class="row"><dt>입관일시</dt><dd>${fmtDateTime(f.encoffinAt)}</dd></div>` : ''}
+              ${f.carryAt ? `<div class="row"><dt>발인일시</dt><dd>${fmtDateTime(f.carryAt)}</dd></div>` : ''}
+              ${f.place ? `<div class="row"><dt>장지</dt><dd>${escapeHtml(f.place)}</dd></div>` : ''}
             </dl>
           </section>
 
@@ -1285,19 +1205,19 @@ const COL = 'obituaries';
                 <button data-copy="${escapeHtml(f.funeralHome)}">주소 복사</button>
               </div>
             </section>
-          `:''}
+          `: ''}
 
           ${o.notice ? `
             <section class="card">
               <div class="card__title"><span class="ico">⚘</span>알리는 글</div>
               <div class="message-block">${escapeHtml(o.notice)}</div>
             </section>
-          `:''}
+          `: ''}
 
-          ${!o.noDonation && donations.some(x => x.bank || x.account) ? `
+          ${!o.noDonation && o.donations.some(x => x.bank || x.account) ? `
             <section class="card">
               <div class="card__title"><span class="ico">⚘</span>마음을 전하는 곳</div>
-              ${donations.filter(x => x.bank || x.account).map(x => `
+              ${o.donations.filter(x => x.bank || x.account).map(x => `
                 <div style="margin-bottom:10px;">
                   <div style="font-size:13px;color:var(--c-text-2);">
                     ${escapeHtml(x.relation || '')}${x.relation && x.owner ? ' · ' : ''}${escapeHtml(x.owner || '')}
@@ -1310,19 +1230,19 @@ const COL = 'obituaries';
                 </div>
               `).join('')}
             </section>
-          `:''}
+          `: ''}
 
           ${o.messagesEnabled ? `
             <section class="card">
               <div class="card__title" style="display:flex;justify-content:space-between;">
                 <span><span class="ico">⚘</span>추모 메시지</span>
-                ${!preview ? `<button class="btn--text" id="goMessages" style="font-size:12px;">더보기 ›</button>`:''}
+                ${!preview ? `<button class="btn--text" id="goMessages" style="font-size:12px;">더보기 ›</button>` : ''}
               </div>
-              ${messages.slice(0,2).length === 0
-                ? `<div class="muted" style="font-size:13px;">아직 추모 메시지가 없습니다.</div>`
-                : messages.slice(0,2).map(messageItem).join('')}
+              ${o.messages.slice(0, 2).length === 0
+          ? `<div class="muted" style="font-size:13px;">아직 추모 메시지가 없습니다.</div>`
+          : o.messages.slice(0, 2).map(messageItem).join('')}
             </section>
-          `:''}
+          `: ''}
 
         </div>
       </div>
@@ -1333,7 +1253,7 @@ const COL = 'obituaries';
     return `
       <div class="message-list-item" data-msg-id="${m.id}">
         <div class="row">
-          <div><span class="name">${escapeHtml(m.name)}</span> <span style="margin-left:6px;">${fmtDate((m.createdAt||'').slice(0,10))}</span></div>
+          <div><span class="name">${escapeHtml(m.name)}</span> <span style="margin-left:6px;">${fmtDate(m.createdAt.slice(0, 10))}</span></div>
           <button class="btn--text" data-msg-del="${m.id}" style="font-size:12px;">삭제</button>
         </div>
         <div class="body">${escapeHtml(m.body)}</div>
@@ -1342,7 +1262,7 @@ const COL = 'obituaries';
   }
 
   // ---------- Detail-level event delegation ----------
-  document.addEventListener('click', async (e) => {
+  document.addEventListener('click', (e) => {
     const copy = e.target.closest('[data-copy]');
     if (copy) {
       const v = copy.dataset.copy;
@@ -1354,31 +1274,25 @@ const COL = 'obituaries';
     const delMsg = e.target.closest('[data-msg-del]');
     if (delMsg) {
       const mid = delMsg.dataset.msgDel;
-      const id = state.activeObituaryId;
-      const o = await storage.get(id);
+      const o = storage.get(state.activeObituaryId);
       if (!o) return;
       openModal({
         title: '추모 메시지를 삭제하시겠습니까?',
         body: `<div class="field"><input type="password" inputmode="numeric" maxlength="6" class="input" id="msgPw" placeholder="작성 시 입력한 비밀번호" /></div>`,
         actions: [
           { label: '취소' },
-          { label: '삭제하기', primary: true, onClick: async (panel) => {
+          {
+            label: '삭제하기', primary: true, onClick: (panel) => {
               const v = panel.querySelector('#msgPw').value;
-              const m = (o.messages || []).find(x => x.id === mid);
-              if (!m) { toast('메시지를 찾을 수 없습니다.'); return false; }
-              const computed = await sha256Hex(v);
-              const ok = m.passwordHash
-                ? (m.passwordHash === computed)
-                : (m.password === v); // legacy fallback
-              if (!ok) { toast('비밀번호가 일치하지 않습니다.'); return false; }
-              o.messages = (o.messages || []).filter(x => x.id !== mid);
-              try {
-                await setDoc(doc(db, COL, id), { messages: o.messages, updatedAt: new Date().toISOString() }, { merge: true });
-              } catch (err) { console.error(err); toast('삭제에 실패했습니다.'); return false; }
+              const m = o.messages.find(x => x.id === mid);
+              if (!m || m.password !== v) { toast('비밀번호가 일치하지 않습니다.'); return false; }
+              o.messages = o.messages.filter(x => x.id !== mid);
+              storage.upsert(o);
               toast('추모 메시지가 삭제되었습니다.');
               if (state.route === 'messages') renderMessages();
               else if (state.route === 'detail') renderDetail();
-            } },
+            }
+          },
         ]
       });
     }
@@ -1399,25 +1313,24 @@ const COL = 'obituaries';
     sheetPanel.querySelectorAll('[data-share]').forEach((b) => b.addEventListener('click', () => {
       const t = b.dataset.share;
       if (t === 'copy') { navigator.clipboard?.writeText(url); toast('부고장 링크가 복사되었습니다.'); }
-      else if (t === 'native' && navigator.share) { navigator.share({ url, title: '부고장' }).catch(()=>{}); }
+      else if (t === 'native' && navigator.share) { navigator.share({ url, title: '부고장' }).catch(() => { }); }
       else if (t === 'kakao') { toast('카카오톡 SDK 연동이 필요합니다.'); }
       closeSheet();
     }));
   }
 
   // ---------- Messages list ----------
-  async function renderMessages() {
+  function renderMessages() {
     const id = state.params.id || state.activeObituaryId;
-    const o = await storage.get(id);
+    const o = storage.get(id);
     if (!o) return navigate('landing');
     state.activeObituaryId = id;
     setHeader({ title: '추모 메시지', back: true, menu: false });
-    const messages = o.messages || [];
     viewEl.innerHTML = `
       <div class="list" style="background:var(--c-surface);min-height:100%;">
-        ${messages.length === 0
-          ? `<div class="list__empty">아직 추모 메시지가 없습니다.<br><br>아래 + 버튼을 눌러 첫 메시지를 남겨주세요.</div>`
-          : messages.map(messageItem).join('')}
+        ${o.messages.length === 0
+        ? `<div class="list__empty">아직 추모 메시지가 없습니다.<br><br>아래 + 버튼을 눌러 첫 메시지를 남겨주세요.</div>`
+        : o.messages.map(messageItem).join('')}
       </div>
       <button class="fab" id="addMsg" aria-label="추모 메시지 작성">+</button>
     `;
@@ -1455,28 +1368,19 @@ const COL = 'obituaries';
       submit.disabled = !(name.value.trim() && /^\d{6}$/.test(pw.value) && body.value.trim());
     };
     [name, pw, body].forEach(el => el.addEventListener('input', update));
-    submit.addEventListener('click', async () => {
-      submit.disabled = true; submit.textContent = '등록 중...';
-      try {
-        const o = await storage.get(id);
-        if (!o) return;
-        const passwordHash = await sha256Hex(pw.value);
-        const newMsg = {
-          id: 'm_' + Math.random().toString(36).slice(2,8),
-          name: name.value.trim(),
-          passwordHash,
-          body: body.value.trim(),
-          createdAt: new Date().toISOString(),
-        };
-        const messages = [newMsg, ...(o.messages || [])];
-        await setDoc(doc(db, COL, id), { messages, updatedAt: new Date().toISOString() }, { merge: true });
-        toast('추모 메시지가 등록되었습니다.');
-        navigate('messages', { id });
-      } catch (e) {
-        console.error(e);
-        toast('등록에 실패했습니다.');
-        submit.disabled = false; submit.textContent = '등록하기';
-      }
+    submit.addEventListener('click', () => {
+      const o = storage.get(id);
+      if (!o) return;
+      o.messages.unshift({
+        id: 'm_' + Math.random().toString(36).slice(2, 8),
+        name: name.value.trim(),
+        password: pw.value,
+        body: body.value.trim(),
+        createdAt: new Date().toISOString(),
+      });
+      storage.upsert(o);
+      toast('추모 메시지가 등록되었습니다.');
+      navigate('messages', { id });
     });
   }
 
@@ -1500,12 +1404,12 @@ const COL = 'obituaries';
     setHeader({ title, back: true, menu: false });
     viewEl.innerHTML = `
       <div class="policy">
-        <p>본 ${escapeHtml(title)} 문서는 데모용입니다. 실제 서비스 운영 시 약관 내용으로 교체해주세요.</p>
+        <p>본 ${escapeHtml(title)} 문서는 데모용입니다. 실제 서비스 운영 시 약관 내용으로 교체해주세요. 약관 내용 입니다. 약관 내용 입니다. 약관 내용 입니다. 약관 내용 입니다. 약관 내용 입니다. 약관 내용 입니다. 약관 내용 입니다.</p>
       </div>
     `;
   }
 
-  // ---------- URL hash routing ----------
+  // ---------- URL hash routing (for shared links) ----------
   function syncFromHash() {
     const hash = location.hash.slice(1);
     if (!hash) return false;
