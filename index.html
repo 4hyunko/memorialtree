@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="ko">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
@@ -7,6 +8,7 @@
   <title>Memorial Tree - 무료 부고장 (간편 부고장)</title>
   <link rel="stylesheet" href="style.css" />
 </head>
+
 <body>
   <div id="app" class="app">
     <!-- Header -->
@@ -19,7 +21,7 @@
       <button class="header__menu" id="headerMenu" aria-label="메뉴">≡</button>
     </header>
 
-    <!-- Views container -->
+    <!-- Views containe -->
     <main class="view" id="view"></main>
 
     <!-- Slide menu -->
@@ -50,10 +52,16 @@
       <div class="modal__panel" id="modalPanel"></div>
     </div>
 
+    <!-- Full popup -->
+    <div class="full-popup" id="fullPopup" aria-hidden="true">
+      <div class="full-popup__panel" id="fullPopupPanel"></div>
+    </div>
+
     <!-- Toast -->
     <div class="toast" id="toast" aria-live="polite"></div>
   </div>
 
-  <script type="module" src="app.js"></script>
+  <script src="app.js"></script>
 </body>
+
 </html>
