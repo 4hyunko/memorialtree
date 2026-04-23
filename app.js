@@ -1,33 +1,112 @@
 /* ======================================================
    Memorial Tree - Web App (free obituary builder)
-   Single-file vanilla JS SPA. Persistence: localStorage.
+   Single-file vanilla JS SPA. Persistence: Firestore.
    ====================================================== */
+
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+import {
+  getFirestore, collection, onSnapshot,
+  doc, setDoc, deleteDoc
+} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBiTgTlFO99hgVXZ0MG_PKdEdlUP9s5iCY",
+  authDomain: "memorialtree-6446e.firebaseapp.com",
+  databaseURL: "https://memorialtree-6446e-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "memorialtree-6446e",
+  storageBucket: "memorialtree-6446e.firebasestorage.app",
+  messagingSenderId: "717119474073",
+  appId: "1:717119474073:web:60fa0098fc24442f396b08"
+};
+const fbApp = initializeApp(firebaseConfig);
+const db = getFirestore(fbApp);
+const obitsCol = collection(db, 'obituaries');
 
 (() => {
   'use strict';
 
-  // ---------- Storage ----------
-  const STORAGE_KEY = 'mt.obituaries.v1';
+  // ---------- Storage (Firestore for data, localStorage for photos) ----------
   const SESSION_KEY = 'mt.session.v1';
+  const PHOTO_KEY = (id) => 'mt.photo.' + id;
+  const getLocalPhoto = (id) => { try { return localStorage.getItem(PHOTO_KEY(id)) || ''; } catch { return ''; } };
+  const setLocalPhoto = (id, dataUrl) => {
+    try {
+      if (dataUrl) localStorage.setItem(PHOTO_KEY(id), dataUrl);
+      else localStorage.removeItem(PHOTO_KEY(id));
+    } catch (e) { console.warn('localStorage photo write failed', e); }
+  };
+  const removeLocalPhoto = (id) => { try { localStorage.removeItem(PHOTO_KEY(id)); } catch {} };
+
+  // ---------- Password hashing (SHA-256 + app pepper) ----------
+  const HASH_PREFIX = 'h1:';
+  const HASH_PEPPER = 'mt.v1.memorialtree.pepper';
+  async function sha256Hex(s) {
+    const buf = new TextEncoder().encode(s);
+    const hash = await crypto.subtle.digest('SHA-256', buf);
+    return HASH_PREFIX + Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  const hashPw = (pw) => sha256Hex(HASH_PEPPER + '|' + pw);
+  const isHashed = (v) => typeof v === 'string' && v.startsWith(HASH_PREFIX);
+  async function matchPw(stored, input) {
+    if (!stored || input == null) return false;
+    if (!isHashed(stored)) return stored === input;
+    return stored === await hashPw(input);
+  }
 
   const storage = {
+    _cache: [],
+    _ready: false,
     list() {
-      try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; }
-      catch { return []; }
+      return [...this._cache].sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
     },
-    save(list) { localStorage.setItem(STORAGE_KEY, JSON.stringify(list)); },
-    get(id) { return this.list().find(o => o.id === id); },
+    get(id) { return this._cache.find(o => o.id === id); },
     upsert(obit) {
-      const list = this.list();
-      const idx = list.findIndex(o => o.id === obit.id);
-      if (idx >= 0) list[idx] = obit; else list.unshift(obit);
-      this.save(list);
+      obit.updatedAt = new Date().toISOString();
+      setLocalPhoto(obit.id, obit.deceased?.photo || '');
+      const cached = JSON.parse(JSON.stringify(obit));
+      if (cached.deceased) cached.deceased.photo = '';
+      const idx = this._cache.findIndex(o => o.id === obit.id);
+      if (idx >= 0) this._cache[idx] = cached; else this._cache.unshift(cached);
+      (async () => {
+        try {
+          const plain = JSON.parse(JSON.stringify(obit));
+          if (plain.deceased) plain.deceased.photo = '';
+          if (plain.password && !isHashed(plain.password)) plain.password = await hashPw(plain.password);
+          if (Array.isArray(plain.messages)) {
+            for (const m of plain.messages) {
+              if (m.password && !isHashed(m.password)) m.password = await hashPw(m.password);
+            }
+          }
+          await setDoc(doc(obitsCol, obit.id), plain);
+        } catch (e) {
+          console.error('Firestore upsert failed', e);
+          toast('저장 중 오류가 발생했습니다.');
+        }
+      })();
       return obit;
     },
     remove(id) {
-      this.save(this.list().filter(o => o.id !== id));
+      this._cache = this._cache.filter(o => o.id !== id);
+      removeLocalPhoto(id);
+      deleteDoc(doc(obitsCol, id)).catch((e) => {
+        console.error('Firestore delete failed', e);
+        toast('삭제 중 오류가 발생했습니다.');
+      });
     }
   };
+
+  onSnapshot(obitsCol, (snap) => {
+    storage._cache = snap.docs.map(d => {
+      const data = d.data();
+      if (data.deceased) data.deceased.photo = getLocalPhoto(d.id);
+      return data;
+    });
+    storage._ready = true;
+    if (['landing', 'my', 'detail'].includes(state.route)) render();
+  }, (err) => {
+    console.error('Firestore subscribe failed', err);
+    toast('데이터를 불러오지 못했습니다.');
+  });
 
   const session = {
     get() { try { return JSON.parse(sessionStorage.getItem(SESSION_KEY)) || {}; } catch { return {}; } },
@@ -171,12 +250,12 @@
       `;
       modalEl.setAttribute('aria-hidden', 'false');
       modalPanel.querySelectorAll('button[data-i]').forEach((btn) => {
-        btn.addEventListener('click', () => {
+        btn.addEventListener('click', async () => {
           const i = +btn.dataset.i;
           const a = actions[i];
           const onClick = a.onClick;
           if (onClick) {
-            const result = onClick(modalPanel);
+            const result = await onClick(modalPanel);
             if (result === false) return;
           }
           modalEl.setAttribute('aria-hidden', 'true');
@@ -204,6 +283,68 @@
   }
   function closeSheet() { sheetEl.setAttribute('aria-hidden', 'true'); }
   $('#bottomSheetBackdrop').addEventListener('click', closeSheet);
+
+  // My Obituaries auth bottom-sheet (phone + password)
+  function openMyObituariesSheet() {
+    openSheet(`
+      <div class="sheet-head">
+        <div class="sheet-title">나의 부고장 관리</div>
+        <button class="sheet-close" id="myClose" aria-label="닫기">×</button>
+      </div>
+      <div class="field">
+        <input class="input" type="tel" id="myPhone" placeholder="휴대폰 번호 *" inputmode="numeric" autocomplete="tel" maxlength="13" />
+      </div>
+      <div class="field">
+        <input class="input" type="password" id="myPw" placeholder="비밀번호 6자리 *" inputmode="numeric" autocomplete="off" maxlength="6" />
+        <div class="field__hint field__hint--error" id="myErr" hidden>일치하는 부고장이 없습니다.</div>
+      </div>
+      <div class="sheet-confirm">
+        <button class="btn btn--primary btn--block" id="myConfirm" disabled>확인</button>
+      </div>
+    `);
+
+    const phoneEl = $('#myPhone');
+    const pwEl = $('#myPw');
+    const errEl = $('#myErr');
+    const confirmEl = $('#myConfirm');
+
+    const formatPhone = (raw) => {
+      const d = raw.replace(/\D/g, '').slice(0, 11);
+      if (d.length < 4) return d;
+      if (d.length < 8) return `${d.slice(0, 3)}-${d.slice(3)}`;
+      return `${d.slice(0, 3)}-${d.slice(3, 7)}-${d.slice(7)}`;
+    };
+    const isPhoneValid = (v) => /^\d{3}-\d{3,4}-\d{4}$/.test(v);
+    const updateState = () => {
+      confirmEl.disabled = !(isPhoneValid(phoneEl.value) && pwEl.value.length === 6);
+      errEl.hidden = true;
+    };
+
+    phoneEl.addEventListener('input', () => { phoneEl.value = formatPhone(phoneEl.value); updateState(); });
+    pwEl.addEventListener('input', () => { pwEl.value = pwEl.value.replace(/\D/g, '').slice(0, 6); updateState(); });
+
+    $('#myClose').addEventListener('click', closeSheet);
+    confirmEl.addEventListener('click', async () => {
+      if (confirmEl.disabled) return;
+      const phone = phoneEl.value;
+      const pw = pwEl.value;
+      const normPhone = phone.replace(/\D/g, '');
+      const candidates = storage.list().filter(o => (o.author?.phone || '').replace(/\D/g, '') === normPhone);
+      let match = false;
+      for (const o of candidates) {
+        if (await matchPw(o.password, pw)) { match = true; break; }
+      }
+      if (!match) {
+        errEl.hidden = false;
+        toast('일치하는 부고장이 없습니다.');
+        return;
+      }
+      closeSheet();
+      navigate('my');
+    });
+
+    setTimeout(() => phoneEl.focus(), 50);
+  }
 
   // Generic select-bottom-sheet
   function openSelectSheet({ title, options, value, layout = 'grid', onSelect }) {
@@ -467,9 +608,9 @@
       actions: [
         { label: '취소' },
         {
-          label: '확인', primary: true, onClick: (panel) => {
+          label: '확인', primary: true, onClick: async (panel) => {
             const v = panel.querySelector('#modalPw').value;
-            if (v !== obit.password) {
+            if (!(await matchPw(obit.password, v))) {
               toast('비밀번호가 일치하지 않습니다.');
               return false;
             }
@@ -559,7 +700,7 @@
         </div>
       </section>
     `;
-    $('#btnMy').addEventListener('click', () => navigate('my'));
+    $('#btnMy').addEventListener('click', () => openMyObituariesSheet());
     $('#btnCreate').addEventListener('click', () => { state.draft = newObituary(); navigate('create'); });
   }
 
@@ -659,6 +800,12 @@
     setHeader({ title: isEdit ? '부고장 수정하기' : '부고장 만들기', back: true, menu: false });
 
     const d = state.draft;
+    if (isEdit && isHashed(d.password)) {
+      state.editOriginalPasswordHash = d.password;
+      d.password = '';
+    } else if (!isEdit) {
+      state.editOriginalPasswordHash = null;
+    }
     viewEl.innerHTML = `
       <div class="create-page">
         <div class="builder-notice"><span class="req">*</span> 표시는 필수 입력 항목입니다. 꼭 입력해주세요.</div>
@@ -812,8 +959,8 @@
             <div class="section__title"><span class="icon-bullet">🔒</span>부고장 비밀번호<span class="req">*</span></div>
           </div>
           <div class="field">
-            <input class="input" type="password" inputmode="numeric" maxlength="6" data-bind="password" value="${d.password}" placeholder="6자리 숫자" />
-            <div class="field__hint">부고장 수정/삭제 시 필요합니다.</div>
+            <input class="input" type="password" inputmode="numeric" maxlength="6" data-bind="password" value="${d.password}" placeholder="${isEdit && state.editOriginalPasswordHash ? '변경 시 새 6자리 입력 (비우면 기존 유지)' : '6자리 숫자'}" />
+            <div class="field__hint">${isEdit && state.editOriginalPasswordHash ? '비밀번호를 바꾸지 않으려면 빈 칸으로 두세요.' : '부고장 수정/삭제 시 필요합니다.'}</div>
           </div>
         </section>
 
@@ -1070,13 +1217,17 @@
 
     // CTA
     $('#btnSaveDraft').addEventListener('click', () => {
+      if (!d.password && state.editOriginalPasswordHash) d.password = state.editOriginalPasswordHash;
       d.status = 'draft';
       d.updatedAt = new Date().toISOString();
       storage.upsert(d);
       toast('저장되었습니다.');
       navigate('my');
     });
-    $('#btnPreview').addEventListener('click', () => navigate('preview'));
+    $('#btnPreview').addEventListener('click', () => {
+      if (!d.password && state.editOriginalPasswordHash) d.password = state.editOriginalPasswordHash;
+      navigate('preview');
+    });
   }
 
   function updateCTAState() { /* preview button always enabled */ }
@@ -1086,7 +1237,7 @@
     if (!d.funeral.deathAt) return '필수항목을 다시 확인해주세요.';
     if (!d.author.name?.trim()) return '필수항목을 다시 확인해주세요.';
     if (!d.author.phone?.trim()) return '필수항목을 다시 확인해주세요.';
-    if (!/^\d{6}$/.test(d.password || '')) return '비밀번호는 6자리 숫자입니다.';
+    if (!isHashed(d.password) && !/^\d{6}$/.test(d.password || '')) return '비밀번호는 6자리 숫자입니다.';
     return null;
   }
 
@@ -1282,10 +1433,10 @@
         actions: [
           { label: '취소' },
           {
-            label: '삭제하기', primary: true, onClick: (panel) => {
+            label: '삭제하기', primary: true, onClick: async (panel) => {
               const v = panel.querySelector('#msgPw').value;
               const m = o.messages.find(x => x.id === mid);
-              if (!m || m.password !== v) { toast('비밀번호가 일치하지 않습니다.'); return false; }
+              if (!m || !(await matchPw(m.password, v))) { toast('비밀번호가 일치하지 않습니다.'); return false; }
               o.messages = o.messages.filter(x => x.id !== mid);
               storage.upsert(o);
               toast('추모 메시지가 삭제되었습니다.');
