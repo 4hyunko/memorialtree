@@ -125,6 +125,13 @@ const obitsCol = collection(db, 'obituaries');
     const [d, t] = iso.split('T');
     return d.replaceAll('-', '.') + (t ? ' ' + t.slice(0, 5) : '');
   };
+  const formatScheduleValue = (iso, timeUndecided) => {
+    if (!iso) return '';
+    const [datePart, timePart] = iso.split('T');
+    const dateStr = datePart.replaceAll('-', '.');
+    if (timeUndecided || !timePart) return dateStr;
+    return `${dateStr} ${timePart.slice(0, 5)}`;
+  };
   const escapeHtml = (str = '') => String(str)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -186,6 +193,7 @@ const obitsCol = collection(db, 'obituaries');
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       password: '',
+      passwordConfirm: '',
       // 고인 정보
       deceased: {
         name: '', sex: '', birth: '', death: '',
@@ -198,10 +206,14 @@ const obitsCol = collection(db, 'obituaries');
       mourners: [{ relation: '', name: '' }], // [{relation, name}]
       // 장례 일정
       funeral: {
-        deathAt: '', // 별세일시
-        encoffinAt: '',
-        carryAt: '',
-        place: '', // 장지
+        deathTerm: '별세', // 5-a 임종 용어
+        deathAt: todayISO(), // 5-b 임종일 (default: today)
+        encoffinAt: '', // 5-c 입관 일시
+        encoffinTimeUndecided: false,
+        carryAt: '', // 5-d 발인 일시
+        carryTimeUndecided: false,
+        carryDateUndecided: false,
+        place: '', // 5-e 장지
         funeralHome: '', // 빈소
         showAll: true,
       },
@@ -383,6 +395,338 @@ const obitsCol = collection(db, 'obituaries');
       closeSheet();
       onSelect(selected);
     });
+  }
+
+  // 관계 선택 bottom-sheet (Bottomsheet-1 item 2)
+  const RELATION_GROUPS = [
+    { key: '자녀-배우자', subs: ['아들', '며느리', '딸', '사위', '남편', '아내'] },
+    { key: '부모', subs: ['아버지', '어머니', '시아버지', '시어머니', '장인', '장모'] },
+    { key: '형제·자매', subs: ['형', '오빠', '누나', '언니', '남동생', '여동생'] },
+    { key: '친척', subs: ['조카', '손자', '손녀', '사촌', '삼촌', '이모', '고모', '외삼촌'] },
+    { key: '친구·지인', subs: ['친구', '선배', '후배', '동료', '지인'] },
+  ];
+  const RELATION_SUB_TO_GROUP = (() => {
+    const m = new Map();
+    RELATION_GROUPS.forEach(g => g.subs.forEach(s => m.set(s, g.key)));
+    return m;
+  })();
+  function openRelationSheet({ value, onConfirm }) {
+    const isCustom = value && !RELATION_SUB_TO_GROUP.has(value);
+    let mainKey = RELATION_SUB_TO_GROUP.get(value) || RELATION_GROUPS[0].key;
+    let selectedSub = RELATION_SUB_TO_GROUP.has(value) ? value : '';
+    let customText = isCustom ? value : '';
+
+    const render = () => {
+      const group = RELATION_GROUPS.find(g => g.key === mainKey) || RELATION_GROUPS[0];
+      const canConfirm = !!selectedSub || !!customText.trim();
+      sheetPanel.innerHTML = `
+        <div class="sheet-head">
+          <div class="sheet-title">관계 선택</div>
+          <button class="sheet-close" id="relClose" aria-label="닫기">×</button>
+        </div>
+        <div class="picker-section-label">대메뉴</div>
+        <div class="sheet-grid sheet-grid--3">
+          ${RELATION_GROUPS.map(g => `<button type="button" class="sheet-grid__item ${g.key === mainKey ? 'is-selected' : ''}" data-main="${escapeHtml(g.key)}">${escapeHtml(g.key)}</button>`).join('')}
+        </div>
+        <div class="picker-section-label" style="margin-top:14px;">소메뉴</div>
+        <div class="sheet-grid sheet-grid--3">
+          ${group.subs.map(s => `<button type="button" class="sheet-grid__item ${s === selectedSub ? 'is-selected' : ''}" data-sub="${escapeHtml(s)}">${escapeHtml(s)}</button>`).join('')}
+        </div>
+        <div class="picker-section-label" style="margin-top:14px;">직접 입력</div>
+        <input type="text" class="input" id="relCustom" placeholder="입력해주세요." value="${escapeHtml(customText)}" maxlength="8" />
+        <div class="sheet-confirm">
+          <button class="btn btn--primary btn--block" id="relConfirm" ${canConfirm ? '' : 'disabled'}>선택 완료</button>
+        </div>
+      `;
+      sheetPanel.querySelectorAll('[data-main]').forEach(btn => btn.addEventListener('click', () => {
+        mainKey = btn.dataset.main;
+        selectedSub = '';
+        render();
+      }));
+      sheetPanel.querySelectorAll('[data-sub]').forEach(btn => btn.addEventListener('click', () => {
+        selectedSub = btn.dataset.sub;
+        customText = '';
+        render();
+      }));
+      sheetPanel.querySelector('#relCustom').addEventListener('input', (e) => {
+        customText = e.target.value;
+        if (customText.trim()) selectedSub = '';
+        sheetPanel.querySelectorAll('[data-sub].is-selected').forEach(el => el.classList.remove('is-selected'));
+        sheetPanel.querySelector('#relConfirm').disabled = !customText.trim();
+      });
+      sheetPanel.querySelector('#relClose').addEventListener('click', closeSheet);
+      sheetPanel.querySelector('#relConfirm').addEventListener('click', () => {
+        const out = customText.trim() || selectedSub;
+        if (!out) return;
+        closeSheet();
+        onConfirm(out);
+      });
+    };
+    sheetEl.setAttribute('aria-hidden', 'false');
+    render();
+  }
+
+  // 임종 용어 bottom-sheet (Bottomsheet-3 item 5)
+  const DEATH_TERM_GENERAL = ['별세', '영면', '작고', '운명', '서거', '타계', '순직', '전사'];
+  const DEATH_TERM_RELIGION = [
+    { value: '소천', label: '소천 (기독교)' },
+    { value: '선종', label: '선종 (천주교)' },
+    { value: '왕생', label: '왕생 (불교)' },
+    { value: '입적', label: '입적 (스님)' },
+  ];
+  function openDeathTermSheet({ value, onConfirm }) {
+    const generalSet = new Set(DEATH_TERM_GENERAL);
+    const religionSet = new Set(DEATH_TERM_RELIGION.map(r => r.value));
+    let area = generalSet.has(value) ? 'general' : religionSet.has(value) ? 'religion' : (value ? 'custom' : 'general');
+    let selected = value || '별세';
+    let customText = area === 'custom' ? value : '';
+
+    const render = () => {
+      sheetPanel.innerHTML = `
+        <div class="sheet-head">
+          <div class="sheet-title">임종 용어</div>
+          <button class="sheet-close" id="dtmClose" aria-label="닫기">×</button>
+        </div>
+        <div class="picker-section-label">일반</div>
+        <div class="sheet-grid sheet-grid--4">
+          ${DEATH_TERM_GENERAL.map(t => `<button type="button" class="sheet-grid__item ${area === 'general' && selected === t ? 'is-selected' : ''}" data-area="general" data-v="${t}">${t}</button>`).join('')}
+        </div>
+        <div class="picker-section-label" style="margin-top:14px;">종교</div>
+        <div class="sheet-grid">
+          ${DEATH_TERM_RELIGION.map(r => `<button type="button" class="sheet-grid__item ${area === 'religion' && selected === r.value ? 'is-selected' : ''}" data-area="religion" data-v="${r.value}">${escapeHtml(r.label)}</button>`).join('')}
+        </div>
+        <div class="picker-section-label" style="margin-top:14px;">직접 입력</div>
+        <input type="text" class="input" id="dtmCustom" placeholder="입력해주세요." value="${escapeHtml(customText)}" maxlength="20" />
+        <div class="sheet-confirm">
+          <button class="btn btn--primary btn--block" id="dtmConfirm" ${(area === 'custom' ? !!customText.trim() : !!selected) ? '' : 'disabled'}>선택 완료</button>
+        </div>
+      `;
+      sheetPanel.querySelectorAll('[data-area]').forEach(btn => btn.addEventListener('click', () => {
+        area = btn.dataset.area;
+        selected = btn.dataset.v;
+        customText = '';
+        render();
+      }));
+      const customEl = sheetPanel.querySelector('#dtmCustom');
+      customEl.addEventListener('input', (e) => {
+        customText = e.target.value;
+        if (customText.trim()) {
+          area = 'custom';
+          selected = '';
+        }
+        sheetPanel.querySelectorAll('.sheet-grid__item.is-selected').forEach(el => el.classList.remove('is-selected'));
+        sheetPanel.querySelector('#dtmConfirm').disabled = !customText.trim();
+      });
+      sheetPanel.querySelector('#dtmClose').addEventListener('click', closeSheet);
+      sheetPanel.querySelector('#dtmConfirm').addEventListener('click', () => {
+        const out = area === 'custom' ? customText.trim() : selected;
+        if (!out) return;
+        closeSheet();
+        onConfirm(out);
+      });
+    };
+    sheetEl.setAttribute('aria-hidden', 'false');
+    render();
+  }
+
+  // Calendar / DateTime bottom-sheet (spec items 8/9/10)
+  function buildCalendarHTML(year, month, selected, todayStr, allowFuture) {
+    const startWeekday = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const prevDays = new Date(year, month, 0).getDate();
+    const cells = [];
+    for (let i = startWeekday - 1; i >= 0; i--) {
+      cells.push(`<button type="button" class="calendar__day calendar__day--muted" disabled>${prevDays - i}</button>`);
+    }
+    for (let day = 1; day <= daysInMonth; day++) {
+      const ds = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      const isToday = ds === todayStr;
+      const isSelected = ds === selected;
+      const isFuture = !allowFuture && ds > todayStr;
+      cells.push(`<button type="button" class="calendar__day ${isSelected ? 'is-selected' : ''} ${isToday && !isSelected ? 'is-today' : ''}" data-date="${ds}" ${isFuture ? 'disabled' : ''}>${day}</button>`);
+    }
+    const trailing = (7 - (cells.length % 7)) % 7;
+    for (let i = 1; i <= trailing; i++) {
+      cells.push(`<button type="button" class="calendar__day calendar__day--muted" disabled>${i}</button>`);
+    }
+    return `<div class="calendar__grid">${cells.join('')}</div>`;
+  }
+
+  function openDatePickerSheet({ title, value, defaultDate, allowFuture = true, onConfirm }) {
+    const todayStr = todayISO();
+    const fallback = defaultDate || todayStr;
+    let selected = value || fallback;
+    const initial = new Date(selected + 'T00:00');
+    let year = initial.getFullYear();
+    let month = initial.getMonth();
+
+    const render = () => {
+      const canNext = allowFuture || (year < new Date().getFullYear() || (year === new Date().getFullYear() && month < new Date().getMonth()));
+      sheetPanel.innerHTML = `
+        <div class="sheet-head">
+          <div class="sheet-title">${escapeHtml(title)}</div>
+          <button class="sheet-close" id="dpClose" aria-label="닫기">×</button>
+        </div>
+        <div class="picker-section-label">날짜 선택<span class="req">*</span></div>
+        <div class="calendar__head">
+          <button type="button" class="calendar__nav" id="dpPrev">‹</button>
+          <div class="calendar__title">${year}.${String(month + 1).padStart(2, '0')}</div>
+          <button type="button" class="calendar__nav" id="dpNext" ${canNext ? '' : 'disabled'}>›</button>
+        </div>
+        <div class="calendar__weekdays">${['S','M','T','W','T','F','S'].map(w => `<div>${w}</div>`).join('')}</div>
+        ${buildCalendarHTML(year, month, selected, todayStr, allowFuture)}
+        <div class="sheet-actions">
+          <button type="button" class="btn btn--secondary" id="dpReset">초기화</button>
+          <button type="button" class="btn btn--primary" id="dpConfirm">선택 완료</button>
+        </div>
+      `;
+      sheetPanel.querySelectorAll('[data-date]').forEach(b => b.addEventListener('click', () => {
+        selected = b.dataset.date;
+        render();
+      }));
+      sheetPanel.querySelector('#dpPrev').addEventListener('click', () => {
+        month--;
+        if (month < 0) { month = 11; year--; }
+        render();
+      });
+      sheetPanel.querySelector('#dpNext').addEventListener('click', () => {
+        if (sheetPanel.querySelector('#dpNext').disabled) return;
+        month++;
+        if (month > 11) { month = 0; year++; }
+        render();
+      });
+      sheetPanel.querySelector('#dpReset').addEventListener('click', () => {
+        selected = fallback;
+        const def = new Date(selected + 'T00:00');
+        year = def.getFullYear();
+        month = def.getMonth();
+        render();
+      });
+      sheetPanel.querySelector('#dpClose').addEventListener('click', closeSheet);
+      sheetPanel.querySelector('#dpConfirm').addEventListener('click', () => {
+        closeSheet();
+        onConfirm(selected);
+      });
+    };
+    sheetEl.setAttribute('aria-hidden', 'false');
+    render();
+  }
+
+  function openDateTimePickerSheet({ title, value, timeUndecided, dateUndecided, allowDateUndecided, onConfirm }) {
+    const todayStr = todayISO();
+    const initialDate = value ? value.split('T')[0] : todayStr;
+    const initialTime = (value && value.split('T')[1]) ? value.split('T')[1].slice(0, 5) : '09:00';
+    let selected = initialDate;
+    let hh = initialTime.split(':')[0] || '09';
+    let mm = (initialTime.split(':')[1] === '30') ? '30' : '00';
+    let tUndecided = !!timeUndecided;
+    let dUndecided = !!dateUndecided;
+    const init = new Date(selected + 'T00:00');
+    let year = init.getFullYear();
+    let month = init.getMonth();
+
+    const HOURS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'));
+    const MINS = ['00', '30'];
+
+    const render = () => {
+      const disabledArea = dUndecided;
+      sheetPanel.innerHTML = `
+        <div class="sheet-head">
+          <div class="sheet-title">${escapeHtml(title)}</div>
+          <button class="sheet-close" id="dtClose" aria-label="닫기">×</button>
+        </div>
+        <div class="picker-section-label">날짜 선택<span class="req">*</span></div>
+        <div class="calendar__head">
+          <button type="button" class="calendar__nav" id="dtPrev" ${disabledArea ? 'disabled' : ''}>‹</button>
+          <div class="calendar__title">${year}.${String(month + 1).padStart(2, '0')}</div>
+          <button type="button" class="calendar__nav" id="dtNext" ${disabledArea ? 'disabled' : ''}>›</button>
+        </div>
+        <div class="calendar__weekdays">${['S','M','T','W','T','F','S'].map(w => `<div>${w}</div>`).join('')}</div>
+        <div ${disabledArea ? 'style="opacity:.4;pointer-events:none;"' : ''}>
+          ${buildCalendarHTML(year, month, selected, todayStr, true)}
+        </div>
+        ${allowDateUndecided ? `
+          <label class="checkbox" style="margin-top:12px;">
+            <input type="checkbox" id="dtDateUndecided" ${dUndecided ? 'checked' : ''}>
+            <span class="checkbox__box"></span>
+            <span>아직 발인일이 미정입니다</span>
+          </label>
+        ` : ''}
+        <div class="time-picker">
+          <div class="time-picker__col">
+            <label>시</label>
+            <select class="input" id="dtHour" ${(tUndecided || disabledArea) ? 'disabled' : ''}>
+              ${HOURS.map(h => `<option value="${h}" ${h === hh ? 'selected' : ''}>${h}</option>`).join('')}
+            </select>
+          </div>
+          <div class="time-picker__col">
+            <label>분</label>
+            <select class="input" id="dtMin" ${(tUndecided || disabledArea) ? 'disabled' : ''}>
+              ${MINS.map(m => `<option value="${m}" ${m === mm ? 'selected' : ''}>${m}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <label class="checkbox" style="margin-top:12px;">
+          <input type="checkbox" id="dtTimeUndecided" ${tUndecided ? 'checked' : ''} ${disabledArea ? 'disabled' : ''}>
+          <span class="checkbox__box"></span>
+          <span>시간은 미정입니다</span>
+        </label>
+        <div class="sheet-actions">
+          <button type="button" class="btn btn--secondary" id="dtReset">초기화</button>
+          <button type="button" class="btn btn--primary" id="dtConfirm">선택 완료</button>
+        </div>
+      `;
+      sheetPanel.querySelectorAll('[data-date]').forEach(b => b.addEventListener('click', () => {
+        selected = b.dataset.date;
+        render();
+      }));
+      sheetPanel.querySelector('#dtPrev').addEventListener('click', () => {
+        if (disabledArea) return;
+        month--;
+        if (month < 0) { month = 11; year--; }
+        render();
+      });
+      sheetPanel.querySelector('#dtNext').addEventListener('click', () => {
+        if (disabledArea) return;
+        month++;
+        if (month > 11) { month = 0; year++; }
+        render();
+      });
+      sheetPanel.querySelector('#dtHour').addEventListener('change', (e) => { hh = e.target.value; });
+      sheetPanel.querySelector('#dtMin').addEventListener('change', (e) => { mm = e.target.value; });
+      sheetPanel.querySelector('#dtTimeUndecided').addEventListener('change', (e) => {
+        tUndecided = e.target.checked;
+        render();
+      });
+      const dateChk = sheetPanel.querySelector('#dtDateUndecided');
+      if (dateChk) dateChk.addEventListener('change', (e) => {
+        dUndecided = e.target.checked;
+        if (dUndecided) tUndecided = false;
+        render();
+      });
+      sheetPanel.querySelector('#dtReset').addEventListener('click', () => {
+        selected = todayStr;
+        hh = '09'; mm = '00';
+        tUndecided = false;
+        dUndecided = false;
+        const def = new Date(selected + 'T00:00');
+        year = def.getFullYear();
+        month = def.getMonth();
+        render();
+      });
+      sheetPanel.querySelector('#dtClose').addEventListener('click', closeSheet);
+      sheetPanel.querySelector('#dtConfirm').addEventListener('click', () => {
+        closeSheet();
+        if (dUndecided) {
+          onConfirm({ iso: '', timeUndecided: false, dateUndecided: true });
+        } else {
+          const iso = tUndecided ? `${selected}T00:00` : `${selected}T${hh}:${mm}`;
+          onConfirm({ iso, timeUndecided: tUndecided, dateUndecided: false });
+        }
+      });
+    };
+    sheetEl.setAttribute('aria-hidden', 'false');
+    render();
   }
 
   // ---------- Photo editor (full popup) ----------
@@ -630,22 +974,48 @@ const obitsCol = collection(db, 'obituaries');
     window.scrollTo({ top: 0, behavior: 'instant' });
   }
 
-  function setHeader({ title, back = false, menu = true, activeId = null }) {
+  function setHeader({ title, back = false, menu = true, saveDraft = false, activeId = null }) {
     $('#headerTitle').innerHTML = title || `<span class="logo-mark">⚘</span> Memorial Tree`;
     $('#headerTitle').dataset.activeId = activeId || '';
     $('#headerBack').hidden = !back;
     $('#headerMenu').style.display = menu ? '' : 'none';
+    $('#headerSaveDraft').hidden = !saveDraft;
   }
+  $('#headerSaveDraft').addEventListener('click', () => {
+    const d = state.draft;
+    if (!d) return;
+    const hasAuthor = !!(d.author?.phone?.trim() || d.password?.trim() || d.passwordConfirm?.trim());
+    if (!hasAuthor) {
+      openModal({
+        title: '안내',
+        desc: '작성자 정보를 입력해 주세요',
+        actions: [{ label: '확인', primary: true, value: 'ok' }]
+      }).then(() => {
+        const phoneEl = $('#authorPhoneInput');
+        if (phoneEl) {
+          phoneEl.scrollIntoView({ block: 'center' });
+          phoneEl.focus();
+        }
+      });
+      return;
+    }
+    d.status = 'draft';
+    d.updatedAt = new Date().toISOString();
+    storage.upsert(d);
+    toast('임시 저장이 완료되었어요');
+    navigate('my');
+  });
+
   $('#headerBack').addEventListener('click', () => {
     // simple back logic
     if (state.route === 'create' || state.route === 'edit') {
       if (state.draft && hasUnsavedChanges()) {
         openModal({
-          title: '작성 중인 내용이 있습니다.',
-          desc: '화면을 벗어나면 작성 중인 내용이 사라집니다.',
+          title: '안내',
+          desc: '지금까지 작성된 내용은 저장되지 않아요.\n마음이 정리되면 그 때 다시 작성해도 괜찮아요.',
           actions: [
-            { label: '더보기' },
-            { label: '벗어나기', primary: true, value: 'leave' },
+            { label: '다음에 작성', value: 'leave' },
+            { label: '계속 작성', primary: true },
           ]
         }).then((v) => { if (v === 'leave') { state.draft = null; navigate('landing'); } });
       } else { navigate('landing'); }
@@ -755,11 +1125,16 @@ const obitsCol = collection(db, 'obituaries');
     const isEnded = o.status === 'ended';
     const statusLabel = isDraft ? '임시저장' : (isEnded ? '장례 종료' : '장례 중');
     const statusClass = isDraft ? 'list__status--draft' : (isEnded ? 'list__status--ended' : '');
+    const deathDate = fmtDate(o.funeral.deathAt?.slice(0, 10) || d.death);
+    const isActive = !isDraft && !isEnded;
+    const nameSuffix = isActive && deathDate ? `<span class="list__name-date">${deathDate} ${escapeHtml(o.funeral.deathTerm || '별세')}</span>` : '';
     const meta = isDraft
       ? `<div class="list__meta"><span class="label">임시저장</span>${fmtDate(o.updatedAt.slice(0, 10))}</div>`
-      : `<div class="list__meta">
-            <span class="label">별세일</span>${fmtDate(o.funeral.deathAt?.slice(0, 10) || d.death)}
-         </div>`;
+      : isActive
+        ? `<div class="list__meta"><span class="label">생성일</span>${fmtDate((o.createdAt || o.updatedAt).slice(0, 10))}</div>`
+        : `<div class="list__meta">
+              <span class="label">${escapeHtml(o.funeral.deathTerm || '별세')}일</span>${deathDate}
+           </div>`;
     const actions = isDraft
       ? `<button class="list__btn" data-act="delete">삭제하기</button>
          <button class="list__btn" data-act="continue">이어서 작성하기</button>`
@@ -768,7 +1143,7 @@ const obitsCol = collection(db, 'obituaries');
     return `
       <article class="list__card" data-id="${o.id}">
         <div class="list__row">
-          <div class="list__name">${escapeHtml(d.name || '(미입력)')}님</div>
+          <div class="list__name">${escapeHtml(d.name || '(미입력)')}님${nameSuffix}</div>
           <span class="list__status ${statusClass}">${statusLabel}</span>
         </div>
         ${meta}
@@ -801,7 +1176,7 @@ const obitsCol = collection(db, 'obituaries');
     }
 
     const isEdit = state.route === 'edit';
-    setHeader({ title: isEdit ? '부고장 수정하기' : '부고장 만들기', back: true, menu: false });
+    setHeader({ title: isEdit ? '부고장 수정하기' : '부고장 만들기', back: true, menu: false, saveDraft: true });
 
     const d = state.draft;
     if (isEdit && isHashed(d.password)) {
@@ -878,26 +1253,37 @@ const obitsCol = collection(db, 'obituaries');
             <div class="section__title"><span class="icon-bullet">⚘</span>장례 일정</div>
           </div>
           <div class="field">
-            <label class="field__label">별세 일시<span class="req">*</span></label>
-            <input class="input" type="datetime-local" data-bind="funeral.deathAt" value="${d.funeral.deathAt}" />
-          </div>
-          <div class="field-row">
-            <div class="field">
-              <label class="field__label">입관 일시</label>
-              <input class="input" type="datetime-local" data-bind="funeral.encoffinAt" value="${d.funeral.encoffinAt}" />
-            </div>
-            <div class="field">
-              <label class="field__label">발인 일시</label>
-              <input class="input" type="datetime-local" data-bind="funeral.carryAt" value="${d.funeral.carryAt}" />
-            </div>
+            <label class="field__label">임종 용어<span class="req">*</span></label>
+            <button type="button" class="picker-input ${d.funeral.deathTerm ? '' : 'picker-input--placeholder'}" data-pick-funeral="term">
+              <span>${d.funeral.deathTerm || '임종 용어를 선택해주세요'}</span>
+              <span class="picker-input__chevron">⌄</span>
+            </button>
           </div>
           <div class="field">
-            <label class="field__label">빈소</label>
-            <input class="input" data-bind="funeral.funeralHome" value="${escapeHtml(d.funeral.funeralHome)}" placeholder="○○병원 장례식장 1호실" />
+            <label class="field__label">임종일<span class="req">*</span></label>
+            <button type="button" class="picker-input ${d.funeral.deathAt ? '' : 'picker-input--placeholder'}" data-pick-funeral="death">
+              <span>${d.funeral.deathAt ? fmtDate(d.funeral.deathAt) : '임종일을 선택해주세요'}</span>
+              <span class="picker-input__chevron">⌄</span>
+            </button>
+          </div>
+          <div class="field">
+            <label class="field__label">입관 일시</label>
+            <button type="button" class="picker-input ${d.funeral.encoffinAt ? '' : 'picker-input--placeholder'}" data-pick-funeral="encoffin">
+              <span>${formatScheduleValue(d.funeral.encoffinAt, d.funeral.encoffinTimeUndecided) || '입관 일시를 선택해주세요'}</span>
+              <span class="picker-input__chevron">⌄</span>
+            </button>
+          </div>
+          <div class="field">
+            <label class="field__label">발인 일시</label>
+            <button type="button" class="picker-input ${(d.funeral.carryAt || d.funeral.carryDateUndecided) ? '' : 'picker-input--placeholder'}" data-pick-funeral="carry">
+              <span>${d.funeral.carryDateUndecided ? '미정' : (formatScheduleValue(d.funeral.carryAt, d.funeral.carryTimeUndecided) || '발인 일시를 선택해주세요')}</span>
+              <span class="picker-input__chevron">⌄</span>
+            </button>
           </div>
           <div class="field">
             <label class="field__label">장지</label>
-            <input class="input" data-bind="funeral.place" value="${escapeHtml(d.funeral.place)}" placeholder="화장장 / 추모공원" />
+            <input class="input" data-bind="funeral.place" value="${escapeHtml(d.funeral.place)}" placeholder="장지를 입력해주세요" />
+            <div class="field__help">* 미입력 시 '미정'으로 반영됩니다.</div>
           </div>
         </section>
 
@@ -905,7 +1291,6 @@ const obitsCol = collection(db, 'obituaries');
         <section class="section">
           <div class="section__head">
             <div class="section__title"><span class="icon-bullet">⚘</span>알리는 글</div>
-            <span class="section__optional">선택</span>
           </div>
           <div class="field">
             <textarea class="textarea" maxlength="500" data-bind="notice" placeholder="황망한 마음에 일일이 직접 연락드리지 못함을 널리 헤아려주시기 바랍니다.">${escapeHtml(d.notice)}</textarea>
@@ -929,25 +1314,6 @@ const obitsCol = collection(db, 'obituaries');
           </label>
         </section>
 
-        <!-- 작성자 정보 -->
-        <section class="section">
-          <div class="section__head">
-            <div class="section__title"><span class="icon-bullet">⚘</span>작성자 정보</div>
-          </div>
-          <div class="field">
-            <label class="field__label">작성자 성함<span class="req">*</span></label>
-            <input class="input" data-bind="author.name" value="${escapeHtml(d.author.name)}" placeholder="작성자 성함" />
-          </div>
-          <div class="field">
-            <label class="field__label">연락처<span class="req">*</span></label>
-            <input class="input" type="tel" data-bind="author.phone" value="${escapeHtml(d.author.phone)}" placeholder="010-1234-5678" />
-          </div>
-          <div class="field">
-            <label class="field__label">고인과의 관계</label>
-            <input class="input" data-bind="author.relation" value="${escapeHtml(d.author.relation)}" placeholder="예: 장남" />
-          </div>
-        </section>
-
         <!-- 메시지 받기 -->
         <section class="section">
           <div class="section__head">
@@ -957,14 +1323,25 @@ const obitsCol = collection(db, 'obituaries');
           <div class="muted" style="font-size:12px;">조문객들에게 추모 메시지를 받을 수 있어요.</div>
         </section>
 
-        <!-- 비밀번호 -->
+        <!-- 작성자 정보 -->
         <section class="section">
           <div class="section__head">
-            <div class="section__title"><span class="icon-bullet">🔒</span>부고장 비밀번호<span class="req">*</span></div>
+            <div class="section__title"><span class="icon-bullet">⚘</span>작성자 정보</div>
+          </div>
+          <div class="section__notice">추후 부고장 수정/삭제 시 필요합니다</div>
+          <div class="field">
+            <label class="field__label">연락처<span class="req">*</span></label>
+            <input class="input" type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="13" id="authorPhoneInput" data-bind="author.phone" value="${escapeHtml(d.author.phone)}" placeholder="010-1234-5678" />
           </div>
           <div class="field">
-            <input class="input" type="password" inputmode="numeric" maxlength="6" data-bind="password" value="${d.password}" placeholder="${isEdit && state.editOriginalPasswordHash ? '변경 시 새 6자리 입력 (비우면 기존 유지)' : '6자리 숫자'}" />
-            <div class="field__hint">${isEdit && state.editOriginalPasswordHash ? '비밀번호를 바꾸지 않으려면 빈 칸으로 두세요.' : '부고장 수정/삭제 시 필요합니다.'}</div>
+            <label class="field__label">비밀번호<span class="req">*</span></label>
+            <input class="input" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" id="authorPwInput" data-bind="password" value="${escapeHtml(d.password || '')}" placeholder="${isEdit && state.editOriginalPasswordHash ? '변경 시 새 6자리 입력 (비우면 기존 유지)' : '6자리 숫자'}" autocomplete="new-password" />
+            ${isEdit && state.editOriginalPasswordHash ? `<div class="field__hint">비밀번호를 바꾸지 않으려면 빈 칸으로 두세요.</div>` : ''}
+          </div>
+          <div class="field">
+            <label class="field__label">비밀번호 확인<span class="req">*</span></label>
+            <input class="input" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" id="authorPwConfirmInput" data-bind="passwordConfirm" value="${escapeHtml(d.passwordConfirm || '')}" placeholder="6자리 숫자" autocomplete="new-password" />
+            <div class="field__hint" id="authorPwConfirmHint"></div>
           </div>
         </section>
 
@@ -978,8 +1355,8 @@ const obitsCol = collection(db, 'obituaries');
       </div>
 
       <div class="bottom-cta bottom-cta--two">
-        <button class="btn btn--secondary" id="btnSaveDraft">임시저장</button>
-        <button class="btn btn--primary" id="btnPreview">미리보기</button>
+        <button class="btn btn--secondary" id="btnPreview">미리보기</button>
+        <button class="btn btn--primary" id="btnComplete">완료하기</button>
       </div>
     `;
 
@@ -1052,8 +1429,37 @@ const obitsCol = collection(db, 'obituaries');
           const ageEl = $('#ageInput');
           if (ageEl) ageEl.value = ageDisplay(el.value);
         }
+        if (el.dataset.bind === 'author.phone') {
+          const digits = (el.value || '').replace(/\D/g, '').slice(0, 11);
+          el.value = digits.length < 4
+            ? digits
+            : digits.length < 8
+              ? `${digits.slice(0, 3)}-${digits.slice(3)}`
+              : `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`;
+        }
+        if (el.dataset.bind === 'password' || el.dataset.bind === 'passwordConfirm') {
+          el.value = (el.value || '').replace(/\D/g, '').slice(0, 6);
+        }
         setByPath(d, el.dataset.bind, el.value);
         if (el.dataset.bind === 'notice') $('#noticeCount').textContent = el.value.length;
+        if (el.dataset.bind === 'password' || el.dataset.bind === 'passwordConfirm') {
+          const hint = $('#authorPwConfirmHint');
+          const confirmEl = $('#authorPwConfirmInput');
+          if (hint && confirmEl) {
+            hint.classList.remove('field__hint--error', 'field__hint--success');
+            confirmEl.classList.remove('is-error');
+            if (!d.passwordConfirm) {
+              hint.textContent = '';
+            } else if (d.password === d.passwordConfirm) {
+              hint.textContent = '비밀번호가 일치합니다.';
+              hint.classList.add('field__hint--success');
+            } else {
+              hint.textContent = '비밀번호가 일치하지 않습니다.';
+              hint.classList.add('field__hint--error');
+              confirmEl.classList.add('is-error');
+            }
+          }
+        }
         updateCTAState();
       });
     });
@@ -1074,9 +1480,9 @@ const obitsCol = collection(db, 'obituaries');
           });
         } else if (kind === 'mourner-rel') {
           const i = +el.dataset.i;
-          openSelectSheet({
-            title: '관계 선택', layout: 'grid', options: RELATION_OPTIONS, value: d.mourners[i]?.relation,
-            onSelect: (v) => { d.mourners[i].relation = v; renderEditor(); }
+          openRelationSheet({
+            value: d.mourners[i]?.relation,
+            onConfirm: (v) => { d.mourners[i].relation = v; renderEditor(); }
           });
         } else if (kind === 'bank') {
           const i = +el.dataset.i;
@@ -1086,9 +1492,57 @@ const obitsCol = collection(db, 'obituaries');
           });
         } else if (kind === 'donation-rel') {
           const i = +el.dataset.i;
-          openSelectSheet({
-            title: '관계 선택', layout: 'grid', options: RELATION_OPTIONS, value: d.donations[i]?.relation,
-            onSelect: (v) => { d.donations[i].relation = v; renderEditor(); }
+          openRelationSheet({
+            value: d.donations[i]?.relation,
+            onConfirm: (v) => { d.donations[i].relation = v; renderEditor(); }
+          });
+        } else if (kind === 'author-rel') {
+          openRelationSheet({
+            value: d.author.relation,
+            onConfirm: (v) => { d.author.relation = v; renderEditor(); }
+          });
+        }
+      });
+    });
+
+    // Funeral schedule pickers (date / datetime / select)
+    viewEl.querySelectorAll('[data-pick-funeral]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const kind = el.dataset.pickFuneral;
+        if (kind === 'term') {
+          openDeathTermSheet({
+            value: d.funeral.deathTerm,
+            onConfirm: (v) => { d.funeral.deathTerm = v; renderEditor(); }
+          });
+        } else if (kind === 'death') {
+          openDatePickerSheet({
+            title: '임종일', value: d.funeral.deathAt, defaultDate: todayISO(), allowFuture: false,
+            onConfirm: (v) => { d.funeral.deathAt = v; renderEditor(); }
+          });
+        } else if (kind === 'encoffin') {
+          openDateTimePickerSheet({
+            title: '입관 일시',
+            value: d.funeral.encoffinAt,
+            timeUndecided: d.funeral.encoffinTimeUndecided,
+            onConfirm: ({ iso, timeUndecided }) => {
+              d.funeral.encoffinAt = iso;
+              d.funeral.encoffinTimeUndecided = timeUndecided;
+              renderEditor();
+            }
+          });
+        } else if (kind === 'carry') {
+          openDateTimePickerSheet({
+            title: '발인 일시',
+            value: d.funeral.carryAt,
+            timeUndecided: d.funeral.carryTimeUndecided,
+            dateUndecided: d.funeral.carryDateUndecided,
+            allowDateUndecided: true,
+            onConfirm: ({ iso, timeUndecided, dateUndecided }) => {
+              d.funeral.carryAt = iso;
+              d.funeral.carryTimeUndecided = timeUndecided;
+              d.funeral.carryDateUndecided = dateUndecided;
+              renderEditor();
+            }
           });
         }
       });
@@ -1220,17 +1674,19 @@ const obitsCol = collection(db, 'obituaries');
     });
 
     // CTA
-    $('#btnSaveDraft').addEventListener('click', () => {
-      if (!d.password && state.editOriginalPasswordHash) d.password = state.editOriginalPasswordHash;
-      d.status = 'draft';
-      d.updatedAt = new Date().toISOString();
-      storage.upsert(d);
-      toast('저장되었습니다.');
-      navigate('my');
-    });
     $('#btnPreview').addEventListener('click', () => {
       if (!d.password && state.editOriginalPasswordHash) d.password = state.editOriginalPasswordHash;
       navigate('preview');
+    });
+    $('#btnComplete').addEventListener('click', () => {
+      const err = validate(d);
+      if (err) { toast(err); return; }
+      if (!d.password && state.editOriginalPasswordHash) d.password = state.editOriginalPasswordHash;
+      d.status = 'active';
+      d.updatedAt = new Date().toISOString();
+      storage.upsert(d);
+      toast('부고장이 등록되었습니다.');
+      navigate('my');
     });
   }
 
@@ -1239,9 +1695,9 @@ const obitsCol = collection(db, 'obituaries');
   function validate(d) {
     if (!d.deceased.name?.trim()) return '필수항목을 다시 확인해주세요.';
     if (!d.funeral.deathAt) return '필수항목을 다시 확인해주세요.';
-    if (!d.author.name?.trim()) return '필수항목을 다시 확인해주세요.';
     if (!d.author.phone?.trim()) return '필수항목을 다시 확인해주세요.';
     if (!isHashed(d.password) && !/^\d{6}$/.test(d.password || '')) return '비밀번호는 6자리 숫자입니다.';
+    if (!isHashed(d.password) && d.password !== d.passwordConfirm) return '비밀번호가 일치하지 않습니다.';
     return null;
   }
 
@@ -1314,7 +1770,7 @@ const obitsCol = collection(db, 'obituaries');
         <header class="obituary__hero">
           <div class="ribbon">⚘</div>
           <div class="head-title">${headTitle}</div>
-          <div class="head-sub">${fmtDate(f.deathAt?.slice(0, 10) || d.death)} 별세</div>
+          <div class="head-sub">${fmtDate(f.deathAt?.slice(0, 10) || d.death)} ${escapeHtml(f.deathTerm || '별세')}</div>
         </header>
         <div class="obituary__body">
 
@@ -1325,7 +1781,7 @@ const obitsCol = collection(db, 'obituaries');
               <div>
                 <div class="deceased__name">故 ${escapeHtml(d.name || '')}님</div>
                 <div class="deceased__meta">
-                  ${[fmtDate(f.deathAt?.slice(0, 10) || d.death) + ' 별세', ageDisplay(d.birth)]
+                  ${[fmtDate(f.deathAt?.slice(0, 10) || d.death) + ' ' + (f.deathTerm || '별세'), ageDisplay(d.birth)]
         .filter(Boolean).join(' · ')}
                 </div>
                 ${d.showTitle && (d.titles || []).some(t => t && t.trim()) ? `<div class="deceased__roles">${(d.titles || []).filter(t => t && t.trim()).map(escapeHtml).join('<br>')}</div>` : ''}
@@ -1345,10 +1801,10 @@ const obitsCol = collection(db, 'obituaries');
           <section class="card">
             <div class="card__title"><span class="ico">⚘</span>장례 일정</div>
             <dl class="def-list">
-              <div class="row"><dt>별세일</dt><dd>${fmtDateTime(f.deathAt)}</dd></div>
-              ${f.encoffinAt ? `<div class="row"><dt>입관일시</dt><dd>${fmtDateTime(f.encoffinAt)}</dd></div>` : ''}
-              ${f.carryAt ? `<div class="row"><dt>발인일시</dt><dd>${fmtDateTime(f.carryAt)}</dd></div>` : ''}
-              ${f.place ? `<div class="row"><dt>장지</dt><dd>${escapeHtml(f.place)}</dd></div>` : ''}
+              <div class="row"><dt>${escapeHtml(f.deathTerm || '별세')}일</dt><dd>${fmtDate(f.deathAt?.slice(0, 10))}</dd></div>
+              ${f.encoffinAt ? `<div class="row"><dt>입관일시</dt><dd>${f.encoffinTimeUndecided ? fmtDate(f.encoffinAt.slice(0, 10)) : fmtDateTime(f.encoffinAt)}</dd></div>` : ''}
+              <div class="row"><dt>발인일시</dt><dd>${f.carryDateUndecided ? '미정' : (f.carryAt ? (f.carryTimeUndecided ? fmtDate(f.carryAt.slice(0, 10)) : fmtDateTime(f.carryAt)) : '미정')}</dd></div>
+              <div class="row"><dt>장지</dt><dd>${f.place ? escapeHtml(f.place) : '미정'}</dd></div>
             </dl>
           </section>
 

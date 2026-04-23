@@ -126,6 +126,20 @@ img {
   justify-content: center;
 }
 
+.header__action {
+  height: 32px;
+  padding: 0 12px;
+  font-size: 14px;
+  background: transparent;
+  border: none;
+  color: var(--c-text);
+  cursor: pointer;
+}
+
+.header__action[hidden] {
+  display: none;
+}
+
 /* View */
 .view {
   min-height: calc(100vh - var(--header-h));
@@ -274,6 +288,15 @@ img {
   font-size: 12px;
   color: var(--c-text-3);
   margin-top: 4px;
+}
+
+.section__notice {
+  background: #f3f3f3;
+  color: var(--c-text-2);
+  font-size: 13px;
+  padding: 12px 14px;
+  border-radius: var(--r-sm);
+  margin-bottom: 14px;
 }
 
 .field__hint--error {
@@ -432,6 +455,16 @@ img {
   overflow-y: auto;
 }
 
+.sheet-grid--4 {
+  grid-template-columns: repeat(4, 1fr);
+  max-height: none;
+}
+
+.sheet-grid--3 {
+  grid-template-columns: repeat(3, 1fr);
+  max-height: none;
+}
+
 .sheet-grid__item {
   padding: 12px 8px;
   border: 1px solid var(--c-border);
@@ -469,6 +502,160 @@ img {
 }
 
 .sheet-confirm {
+  margin-top: 14px;
+}
+
+/* Dropdown-style picker trigger (replaces native date/select for funeral schedule) */
+.picker-input {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 44px;
+  padding: 0 12px;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm);
+  font-size: 15px;
+  color: var(--c-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.picker-input--placeholder {
+  color: var(--c-text-3);
+}
+
+.picker-input--disabled {
+  background: #f3f3f3;
+  color: var(--c-text-3);
+  cursor: not-allowed;
+}
+
+.picker-input__chevron {
+  font-size: 12px;
+  color: var(--c-text-3);
+  transform: rotate(0deg);
+  margin-left: 8px;
+}
+
+.field__help {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--c-text-3);
+}
+
+/* Calendar in bottom sheet */
+.picker-section-label {
+  font-size: 13px;
+  color: var(--c-text-2);
+  margin-bottom: 8px;
+}
+
+.calendar__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  border: 1px dashed var(--c-border);
+  border-radius: var(--r-sm);
+  margin-bottom: 10px;
+}
+
+.calendar__nav {
+  width: 28px;
+  height: 28px;
+  font-size: 18px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--c-text);
+}
+
+.calendar__nav:disabled {
+  color: var(--c-text-3);
+  cursor: not-allowed;
+}
+
+.calendar__title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.calendar__weekdays,
+.calendar__grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.calendar__weekdays {
+  margin-bottom: 4px;
+}
+
+.calendar__weekdays > div {
+  text-align: center;
+  font-size: 12px;
+  color: var(--c-text-3);
+  padding: 4px 0;
+}
+
+.calendar__day {
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  color: var(--c-text);
+  cursor: pointer;
+}
+
+.calendar__day:disabled,
+.calendar__day--muted {
+  color: var(--c-text-3);
+  cursor: not-allowed;
+}
+
+.calendar__day.is-today {
+  background: var(--c-text);
+  color: var(--c-surface);
+}
+
+.calendar__day.is-selected {
+  background: var(--c-primary);
+  color: var(--c-surface);
+}
+
+.calendar__day.is-selected.is-today {
+  background: var(--c-primary);
+}
+
+.time-picker {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.time-picker__col label {
+  display: block;
+  font-size: 12px;
+  color: var(--c-text-2);
+  margin-bottom: 6px;
+}
+
+.time-picker .input:disabled {
+  background: #f3f3f3;
+  color: var(--c-text-3);
+}
+
+.sheet-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
   margin-top: 14px;
 }
 
@@ -766,6 +953,13 @@ img {
 .list__name {
   font-size: 15px;
   font-weight: 600;
+}
+
+.list__name-date {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--c-text-2);
+  margin-left: 8px;
 }
 
 .list__date {
@@ -1242,6 +1436,7 @@ img {
   font-size: 13px;
   color: var(--c-text-2);
   margin-bottom: 18px;
+  white-space: pre-line;
 }
 
 .modal__actions {
