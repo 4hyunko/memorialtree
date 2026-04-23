@@ -419,26 +419,14 @@ const obitsCol = collection(db, 'obituaries');
   ];
 
   let funeralAllCache = null;
-  const NUM_PER_PAGE = 500;
 
   async function fetchAllFuneralFacilities() {
     if (funeralAllCache) return funeralAllCache;
-    const first = await fetch(`/api/funeral?numOfRows=${NUM_PER_PAGE}&pageNo=1`).then(r => r.json());
-    if (first?.error) throw new Error(first.error);
-    const total = Number(first?.totalCount || 0);
-    const pageCount = Math.max(1, Math.ceil(total / NUM_PER_PAGE));
-    let items = Array.isArray(first?.items) ? first.items : [];
-    if (pageCount > 1) {
-      const rest = await Promise.all(
-        Array.from({ length: pageCount - 1 }, (_, i) => i + 2).map(async p => {
-          const d = await fetch(`/api/funeral?numOfRows=${NUM_PER_PAGE}&pageNo=${p}`).then(r => r.json());
-          return Array.isArray(d?.items) ? d.items : [];
-        })
-      );
-      items = items.concat(...rest);
-    }
-    funeralAllCache = items;
-    return items;
+    const res = await fetch('./data/funeral-halls.json', { cache: 'force-cache' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    funeralAllCache = Array.isArray(data?.items) ? data.items : [];
+    return funeralAllCache;
   }
 
   function openAddressSearchSheet({ title = '장례식장 검색', value, onConfirm }) {
