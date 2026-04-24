@@ -2614,9 +2614,10 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
       </div>
     `;
     const name = $('#mName'), pw = $('#mPw'), body = $('#mBody'), submit = $('#mSubmit'), count = $('#mCount');
+    const DEFAULT_BODY = '삼가 고인의 명복을 빕니다.';
     const update = () => {
       count.textContent = body.value.length;
-      submit.disabled = !(name.value.trim() && /^\d{6}$/.test(pw.value) && body.value.trim());
+      submit.disabled = !(name.value.trim() && /^\d{6}$/.test(pw.value));
     };
     [name, pw, body].forEach(el => el.addEventListener('input', update));
     submit.addEventListener('click', () => {
@@ -2626,7 +2627,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
         id: 'm_' + Math.random().toString(36).slice(2, 8),
         name: name.value.trim(),
         password: pw.value,
-        body: body.value.trim(),
+        body: body.value.trim() || DEFAULT_BODY,
         createdAt: new Date().toISOString(),
       });
       storage.upsert(o);
