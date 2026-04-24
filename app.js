@@ -621,7 +621,8 @@ const obitsCol = collection(db, 'obituaries');
         <div class="sheet-title">${escapeHtml(title)}</div>
         <button class="sheet-close" id="asClose" aria-label="닫기">×</button>
       </div>
-      <div class="search-input">
+      <div class="search-input search-input--icon">
+        <svg class="search-input__icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         <input class="input" id="asInput" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(value || '')}" autocomplete="off" />
       </div>
       <div id="asSummary">${renderSummary()}</div>
@@ -1558,9 +1559,9 @@ const obitsCol = collection(db, 'obituaries');
           ${d.funeral.funeralHomeMode === 'manual' ? `
             <div class="field">
               <label class="field__label">주소</label>
-              <button type="button" class="picker-input ${d.funeral.funeralHomeAddr ? '' : 'picker-input--placeholder'}" data-pick-funeral="addressSearch">
+              <button type="button" class="picker-input picker-input--search ${d.funeral.funeralHomeAddr ? '' : 'picker-input--placeholder'}" data-pick-funeral="addressSearch">
+                <svg class="picker-input__icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                 <span>${d.funeral.funeralHomeAddr ? escapeHtml(d.funeral.funeralHomeAddr) : '주소를 검색해주세요'}</span>
-                <span class="picker-input__chevron">⌄</span>
               </button>
             </div>
             <div class="field">
@@ -1578,9 +1579,9 @@ const obitsCol = collection(db, 'obituaries');
           ` : `
             <div class="field">
               <label class="field__label">장례식장</label>
-              <button type="button" class="picker-input ${d.funeral.funeralHomeName ? '' : 'picker-input--placeholder'}" data-pick-funeral="funeralHome">
+              <button type="button" class="picker-input picker-input--search ${d.funeral.funeralHomeName ? '' : 'picker-input--placeholder'}" data-pick-funeral="funeralHome">
+                <svg class="picker-input__icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                 <span>${d.funeral.funeralHomeName ? escapeHtml(d.funeral.funeralHomeName) : '장례식장을 검색해주세요'}</span>
-                <span class="picker-input__chevron">⌄</span>
               </button>
             </div>
             ${d.funeral.funeralHomeName ? `

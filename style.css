@@ -580,6 +580,23 @@ img {
   margin-left: 8px;
 }
 
+.picker-input--search {
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.picker-input--search .picker-input__icon {
+  flex: 0 0 auto;
+  color: var(--c-text-3);
+}
+
+.picker-input--search > span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .field__help {
   margin-top: 6px;
   font-size: 12px;
@@ -1885,6 +1902,29 @@ img {
 
 .search-input .input {
   flex: 1;
+}
+
+.search-input--icon {
+  position: relative;
+  align-items: center;
+  justify-content: center;
+  max-width: 420px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.search-input--icon .search-input__icon {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--c-text-3);
+  pointer-events: none;
+}
+
+.search-input--icon .input {
+  padding-left: 40px;
+  text-align: left;
 }
 
 .search-results {
