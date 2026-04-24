@@ -1735,6 +1735,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
           <div class="muted" style="font-size:12px;">조문객들에게 추모 메시지를 받을 수 있어요.</div>
         </section>
 
+        ${!isEdit ? `
         <!-- 작성자 정보 -->
         <section class="section">
           <div class="section__head">
@@ -1747,8 +1748,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
           </div>
           <div class="field">
             <label class="field__label">비밀번호<span class="req">*</span></label>
-            <input class="input" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" id="authorPwInput" data-bind="password" value="${escapeHtml(d.password || '')}" placeholder="${isEdit && state.editOriginalPasswordHash ? '변경 시 새 6자리 입력 (비우면 기존 유지)' : '6자리 숫자'}" autocomplete="new-password" />
-            ${isEdit && state.editOriginalPasswordHash ? `<div class="field__hint">비밀번호를 바꾸지 않으려면 빈 칸으로 두세요.</div>` : ''}
+            <input class="input" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" id="authorPwInput" data-bind="password" value="${escapeHtml(d.password || '')}" placeholder="6자리 숫자" autocomplete="new-password" />
           </div>
           <div class="field">
             <label class="field__label">비밀번호 확인<span class="req">*</span></label>
@@ -1756,6 +1756,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
             <div class="field__hint" id="authorPwConfirmHint"></div>
           </div>
         </section>
+        ` : ''}
 
         <section class="section">
           <label class="checkbox" id="termsCheck">
