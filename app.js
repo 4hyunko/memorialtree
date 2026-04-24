@@ -8,6 +8,7 @@ import {
   getFirestore, collection, onSnapshot,
   doc, setDoc, deleteDoc
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const firebaseConfig = {
   apiKey: "AIzaSyBiTgTlFO99hgVXZ0MG_PKdEdlUP9s5iCY",
@@ -22,20 +23,41 @@ const fbApp = initializeApp(firebaseConfig);
 const db = getFirestore(fbApp);
 const obitsCol = collection(db, 'obituaries');
 
+// Supabase (영정사진 저장)
+const SUPABASE_URL = 'https://nfmiybikusxwsiudaxzw.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_6zqulXul93cHF74IG3H2EQ_pI2n_e4e';
+const SUPABASE_BUCKET = 'photo';
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
 (() => {
   'use strict';
 
-  // ---------- Storage (Firestore for data, localStorage for photos) ----------
+  // ---------- Storage (Firestore for data, Supabase Storage for photos) ----------
   const SESSION_KEY = 'mt.session.v1';
   const PHOTO_KEY = (id) => 'mt.photo.' + id;
+  // localStorage fallback — 구데이터 호환용 (신규 저장은 Supabase로)
   const getLocalPhoto = (id) => { try { return localStorage.getItem(PHOTO_KEY(id)) || ''; } catch { return ''; } };
-  const setLocalPhoto = (id, dataUrl) => {
-    try {
-      if (dataUrl) localStorage.setItem(PHOTO_KEY(id), dataUrl);
-      else localStorage.removeItem(PHOTO_KEY(id));
-    } catch (e) { console.warn('localStorage photo write failed', e); }
-  };
   const removeLocalPhoto = (id) => { try { localStorage.removeItem(PHOTO_KEY(id)); } catch { } };
+
+  // Supabase Storage helpers
+  async function uploadPhotoToSupabase(obitId, dataUrl) {
+    if (!dataUrl || !dataUrl.startsWith('data:')) return dataUrl || '';
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+    const mime = blob.type || 'image/jpeg';
+    const ext = (mime.split('/')[1] || 'jpg').split(';')[0];
+    const path = `${obitId}.${ext}`;
+    const { error } = await supabase.storage
+      .from(SUPABASE_BUCKET)
+      .upload(path, blob, { upsert: true, contentType: mime });
+    if (error) throw error;
+    const { data: urlData } = supabase.storage.from(SUPABASE_BUCKET).getPublicUrl(path);
+    return `${urlData.publicUrl}?v=${Date.now()}`;
+  }
+  async function removePhotoFromSupabase(obitId) {
+    const paths = ['jpg', 'jpeg', 'png', 'webp', 'gif'].map(e => `${obitId}.${e}`);
+    try { await supabase.storage.from(SUPABASE_BUCKET).remove(paths); } catch (e) { /* noop */ }
+  }
 
   // ---------- Password hashing (SHA-256 + app pepper) ----------
   const HASH_PREFIX = 'h1:';
@@ -62,15 +84,37 @@ const obitsCol = collection(db, 'obituaries');
     get(id) { return this._cache.find(o => o.id === id); },
     upsert(obit) {
       obit.updatedAt = new Date().toISOString();
-      setLocalPhoto(obit.id, obit.deceased?.photo || '');
+      const originalPhoto = obit.deceased?.photo || '';
+      // 캐시는 즉시 원본(dataURL 포함)으로 반영해 UI가 끊기지 않게 함
       const cached = JSON.parse(JSON.stringify(obit));
-      if (cached.deceased) cached.deceased.photo = '';
       const idx = this._cache.findIndex(o => o.id === obit.id);
       if (idx >= 0) this._cache[idx] = cached; else this._cache.unshift(cached);
+
       (async () => {
         try {
+          // 1) 사진 처리
+          let photoUrl = originalPhoto;
+          if (originalPhoto.startsWith('data:')) {
+            // 새 dataURL → Supabase 업로드
+            try {
+              photoUrl = await uploadPhotoToSupabase(obit.id, originalPhoto);
+              removeLocalPhoto(obit.id); // 마이그레이션: 옛 localStorage 지움
+            } catch (e) {
+              console.error('photo upload failed', e);
+              toast('사진 업로드에 실패했습니다.');
+              photoUrl = '';
+            }
+          } else if (!originalPhoto) {
+            // 사진 제거 → Supabase에서도 삭제
+            await removePhotoFromSupabase(obit.id);
+            removeLocalPhoto(obit.id);
+          }
+          // 캐시 URL 갱신
+          if (cached.deceased) cached.deceased.photo = photoUrl;
+
+          // 2) Firestore 저장
           const plain = JSON.parse(JSON.stringify(obit));
-          if (plain.deceased) plain.deceased.photo = '';
+          if (plain.deceased) plain.deceased.photo = photoUrl;
           if (plain.password && !isHashed(plain.password)) plain.password = await hashPw(plain.password);
           if (Array.isArray(plain.messages)) {
             for (const m of plain.messages) {
@@ -88,6 +132,7 @@ const obitsCol = collection(db, 'obituaries');
     remove(id) {
       this._cache = this._cache.filter(o => o.id !== id);
       removeLocalPhoto(id);
+      removePhotoFromSupabase(id).catch(() => { });
       deleteDoc(doc(obitsCol, id)).catch((e) => {
         console.error('Firestore delete failed', e);
         toast('다시 시도해주세요.');
@@ -98,7 +143,10 @@ const obitsCol = collection(db, 'obituaries');
   onSnapshot(obitsCol, (snap) => {
     storage._cache = snap.docs.map(d => {
       const data = d.data();
-      if (data.deceased) data.deceased.photo = getLocalPhoto(d.id);
+      if (data.deceased && !data.deceased.photo) {
+        // 신규 저장은 Firestore에 URL 저장, 없으면 legacy localStorage 폴백
+        data.deceased.photo = getLocalPhoto(d.id);
+      }
       return data;
     });
     storage._ready = true;
@@ -1316,7 +1364,11 @@ const obitsCol = collection(db, 'obituaries');
       navigate('landing');
     } else if (state.route === 'edit') {
       navigate('detail', { id: state.params.id });
-    } else if (['my', 'privacy', 'terms', 'messages', 'message-write', 'ended'].includes(state.route)) {
+    } else if (state.route === 'messages' || state.route === 'message-write') {
+      const id = state.params.id || state.activeObituaryId;
+      if (id) navigate('detail', { id });
+      else navigate('landing');
+    } else if (['my', 'privacy', 'terms', 'ended'].includes(state.route)) {
       history.length > 1 ? history.back() : navigate('landing');
     } else {
       navigate('landing');
