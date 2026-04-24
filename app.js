@@ -2007,25 +2007,42 @@ const obitsCol = collection(db, 'obituaries');
     const places = new kakao.maps.services.Places();
 
     containers.forEach(el => {
-      const addr = el.dataset.addr || '';
-      const name = el.dataset.name || '';
+      let addr = el.dataset.addr || '';
+      let name = el.dataset.name || '';
+      // 레거시 데이터 보정: name과 addr이 "{name} ({addr})" 형태로 함께 들어온 경우 분리
+      if (name && /\s\(/.test(name) && (!addr || addr === name)) {
+        const idx = name.indexOf(' (');
+        const extractedAddr = name.slice(idx + 2).replace(/\)\s*$/, '').trim();
+        const extractedName = name.slice(0, idx).trim();
+        name = extractedName;
+        if (!addr || addr === el.dataset.name) addr = extractedAddr;
+      }
       const cleanAddr = addr.replace(/\s*\([^)]*\)/g, '').trim();
 
-      const resolveLocation = () =>
-        new Promise(res => {
-          if (!cleanAddr) return res(null);
-          geocoder.addressSearch(cleanAddr, (result, status) => {
-            if (status === kakao.maps.services.Status.OK && result[0]) return res(result[0]);
-            if (!name) return res(null);
-            places.keywordSearch(name, (r2, s2) => {
-              if (s2 === kakao.maps.services.Status.OK && r2[0]) {
-                res({ x: r2[0].x, y: r2[0].y });
-              } else {
-                res(null);
-              }
-            });
-          });
+      const searchByName = () => new Promise(res => {
+        if (!name) return res(null);
+        places.keywordSearch(name, (r, s) => {
+          if (s === kakao.maps.services.Status.OK && r[0]) {
+            res({ x: r[0].x, y: r[0].y });
+          } else {
+            res(null);
+          }
         });
+      });
+
+      const searchByAddr = () => new Promise(res => {
+        if (!cleanAddr) return res(null);
+        geocoder.addressSearch(cleanAddr, (r, s) => {
+          if (s === kakao.maps.services.Status.OK && r[0]) {
+            res({ x: r[0].x, y: r[0].y });
+          } else {
+            res(null);
+          }
+        });
+      });
+
+      // 장소명 우선 검색 → 실패 시 주소 검색 폴백
+      const resolveLocation = async () => (await searchByName()) || (await searchByAddr());
 
       resolveLocation().then(loc => {
         el.setAttribute('data-kakao-ready', loc ? '1' : 'notfound');
