@@ -243,6 +243,7 @@ const obitsCol = collection(db, 'obituaries');
     draft: null, // current editing obituary
     activeObituaryId: null, // for menu actions
     authedPhone: '', // normalized phone (digits only) that passed the "나의 부고장 관리" auth
+    authedPw: '', // plain password (session memory only) used to filter obits in my list
   };
 
   // ---------- Toast ----------
@@ -349,16 +350,17 @@ const obitsCol = collection(db, 'obituaries');
       const pw = pwEl.value;
       const normPhone = phone.replace(/\D/g, '');
       const candidates = storage.list().filter(o => (o.author?.phone || '').replace(/\D/g, '') === normPhone);
-      let match = false;
+      let hasMatch = false;
       for (const o of candidates) {
-        if (await matchPw(o.password, pw)) { match = true; break; }
+        if (await matchPw(o.password, pw)) { hasMatch = true; break; }
       }
-      if (!match) {
+      if (!hasMatch) {
         errEl.hidden = false;
         toast('일치하는 부고장이 없습니다.');
         return;
       }
       state.authedPhone = normPhone;
+      state.authedPw = pw;
       closeSheet();
       navigate('my');
     });
@@ -1316,6 +1318,7 @@ const obitsCol = collection(db, 'obituaries');
     state.draft = null;
     state.activeObituaryId = null;
     state.authedPhone = '';
+    state.authedPw = '';
     viewEl.innerHTML = `
       <section class="landing">
         <div class="landing__ribbon">⚘</div>
@@ -1334,10 +1337,23 @@ const obitsCol = collection(db, 'obituaries');
   }
 
   // ---------- My obituaries ----------
-  function renderMyObituaries() {
+  async function renderMyObituaries() {
     setHeader({ title: '나의 부고장 관리', back: true, menu: false });
-    if (!state.authedPhone) return navigate('landing');
-    const list = storage.list().filter(o => (o.author?.phone || '').replace(/\D/g, '') === state.authedPhone);
+    if (!state.authedPhone || !state.authedPw) return navigate('landing');
+
+    viewEl.innerHTML = `<div class="list__empty">불러오는 중...</div>`;
+
+    const candidates = storage.list().filter(o =>
+      (o.author?.phone || '').replace(/\D/g, '') === state.authedPhone
+    );
+    const matched = await Promise.all(
+      candidates.map(async o => (await matchPw(o.password, state.authedPw)) ? o : null)
+    );
+    const list = matched.filter(Boolean);
+
+    // 비동기 중에 사용자가 다른 화면으로 이동했으면 렌더 건너뜀
+    if (state.route !== 'my') return;
+
     viewEl.innerHTML = `
       <div class="list">
         ${list.length === 0
