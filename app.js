@@ -1779,6 +1779,12 @@ const obitsCol = collection(db, 'obituaries');
 
     // bind inputs
     viewEl.querySelectorAll('[data-bind]').forEach((el) => {
+      if (el.dataset.bind === 'deceased.birth') {
+        el.addEventListener('blur', () => {
+          const ageEl = $('#ageInput');
+          if (ageEl) ageEl.value = ageDisplay(el.value);
+        });
+      }
       el.addEventListener('input', () => {
         if (el.dataset.bind === 'deceased.birth') {
           el.value = (el.value || '').replace(/\D/g, '').slice(0, 6);
@@ -2097,10 +2103,17 @@ const obitsCol = collection(db, 'obituaries');
     $('#btnComplete').addEventListener('click', () => {
       const err = validate(d);
       if (err) { toast(err); return; }
+      // 해시되기 전 raw 비밀번호를 캡처해서 자동 인증에 사용
+      const rawPw = !isHashed(d.password) ? (d.password || '') : '';
       if (!d.password && state.editOriginalPasswordHash) d.password = state.editOriginalPasswordHash;
       d.status = 'active';
       d.updatedAt = new Date().toISOString();
       storage.upsert(d);
+      // 나의 부고장 자동 로그인: raw 비밀번호가 있을 때만 갱신 (편집 중 비번 변경 포함)
+      if (rawPw) {
+        state.authedPhone = (d.author?.phone || '').replace(/\D/g, '');
+        state.authedPw = rawPw;
+      }
       toast('저장되었습니다.');
       navigate('my');
     });
