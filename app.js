@@ -150,7 +150,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
       return data;
     });
     storage._ready = true;
-    if (['landing', 'my', 'detail'].includes(state.route)) render();
+    if (['landing', 'my', 'detail', 'messages', 'message-write'].includes(state.route)) render();
   }, (err) => {
     console.error('Firestore subscribe failed', err);
     toast('다시 시도해주세요.');
@@ -2327,10 +2327,18 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
   // ---------- Detail (recipient view) ----------
   function renderDetail() {
     const id = state.params.id;
-    const o = storage.get(id);
-    if (!o) { toast('부고장을 찾을 수 없습니다.'); return navigate('landing'); }
-    state.activeObituaryId = id;
     setHeader({ title: '부고장', back: true, menu: true, activeId: id });
+    const o = storage.get(id);
+    if (!o) {
+      // Firestore 데이터가 아직 안 들어왔으면 로딩 상태로 대기 (snapshot 콜백이 render() 재호출)
+      if (!storage._ready) {
+        viewEl.innerHTML = `<div class="list__empty" style="padding:60px 20px;">불러오는 중...</div>`;
+        return;
+      }
+      toast('부고장을 찾을 수 없습니다.');
+      return navigate('landing');
+    }
+    state.activeObituaryId = id;
 
     if (o.status === 'ended') return navigate('ended');
 
@@ -2672,10 +2680,16 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
   // ---------- Messages list ----------
   function renderMessages() {
     const id = state.params.id || state.activeObituaryId;
-    const o = storage.get(id);
-    if (!o) return navigate('landing');
-    state.activeObituaryId = id;
     setHeader({ title: '추모 메시지', back: true, menu: false });
+    const o = storage.get(id);
+    if (!o) {
+      if (!storage._ready) {
+        viewEl.innerHTML = `<div class="list__empty" style="padding:60px 20px;">불러오는 중...</div>`;
+        return;
+      }
+      return navigate('landing');
+    }
+    state.activeObituaryId = id;
     viewEl.innerHTML = `
       <div class="list" style="background:var(--c-surface);min-height:100%;">
         ${o.messages.length === 0
