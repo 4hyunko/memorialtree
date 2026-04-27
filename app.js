@@ -298,11 +298,16 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
   // ---------- Toast ----------
   const toastEl = $('#toast');
   let toastTimer;
+  const hideToast = () => toastEl.classList.remove('is-show');
+  toastEl.addEventListener('click', (e) => {
+    if (e.target.closest('.toast__close')) hideToast();
+  });
   function toast(msg) {
-    toastEl.textContent = msg;
+    toastEl.innerHTML = `<span class="toast__msg"></span><button type="button" class="toast__close" aria-label="닫기">×</button>`;
+    toastEl.querySelector('.toast__msg').textContent = msg;
     toastEl.classList.add('is-show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => toastEl.classList.remove('is-show'), 2200);
+    toastTimer = setTimeout(hideToast, 2200);
   }
 
   // ---------- Modal ----------
@@ -1410,16 +1415,31 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
     state.activeObituaryId = null;
     state.authedPhone = '';
     state.authedPw = '';
+    const petals = Array.from({length: 14}, (_,i) => {
+      const x = (i * 7.3 + 5) % 100;
+      const delay = (i * 0.7) % 8;
+      const duration = 9 + (i % 5);
+      const size = 6 + (i % 4) * 2;
+      const drift = (i % 3 === 0 ? 1 : -1) * (12 + (i % 4) * 6);
+      const rot = (i % 2 === 0 ? 1 : -1) * (300 + (i % 3) * 120);
+      return `<span class="petal" style="--x:${x}%;--d:${delay}s;--t:${duration}s;--s:${size}px;--dx:${drift}px;--r:${rot}deg"></span>`;
+    }).join('');
     viewEl.innerHTML = `
       <section class="landing">
-        <div class="landing__ribbon">⚘</div>
-        <div class="landing__sub">간편 부고장</div>
-        <div class="landing__title">부고장을 제작합니다</div>
-        <div class="landing__desc">유족과 조문객들에게 전할 안내를 작성해보세요</div>
-        <div class="landing__visual"><span>⚘</span></div>
+        <div class="landing__petals" aria-hidden="true">${petals}</div>
+        <div class="landing__main">
+          <div class="landing__stage">
+            <img class="landing__sway" src="image/gukhwa.png" alt="" aria-hidden="true" />
+          </div>
+          <div class="landing__copy">
+            <div class="landing__sub">간편 부고장</div>
+            <div class="landing__title">부고장을 제작합니다</div>
+            <div class="landing__desc">유족들과 조문객들에게 전할 안내를 작성해보세요</div>
+          </div>
+        </div>
         <div class="landing__cta">
-          <button class="btn btn--secondary" id="btnMy">나의 부고장 관리</button>
-          <button class="btn btn--primary" id="btnCreate">부고장 만들기</button>
+          <button class="btn btn--primary" id="btnMy">나의 부고장 관리</button>
+          <button class="btn btn--secondary" id="btnCreate">부고장 만들기</button>
         </div>
       </section>
     `;
@@ -1567,7 +1587,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
               <input class="input" id="birthInput" data-bind="deceased.birth" value="${escapeHtml(d.deceased.birth || '')}" placeholder="예)810910" inputmode="numeric" maxlength="6" />
               <input class="input" id="ageInput" value="${ageDisplay(d.deceased.birth)}" placeholder="향년" disabled />
             </div>
-            <div class="field__hint">* 입력 시 향년 나이를 자동 계산합니다</div>
+            <div class="field__hint">입력 시 향년 나이를 자동 계산합니다</div>
           </div>
           <div class="field">
             <label class="field__label">직함</label>
@@ -1698,7 +1718,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
           <div class="field">
             <label class="field__label">장지</label>
             <input class="input" data-bind="funeral.place" value="${escapeHtml(d.funeral.place)}" placeholder="장지를 입력해주세요" />
-            <div class="field__help">* 미입력 시 '미정'으로 반영됩니다.</div>
+            <div class="field__help">미입력 시 '미정'으로 반영됩니다.</div>
           </div>
         </section>
 
@@ -1710,7 +1730,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
           <div class="field">
             <textarea class="textarea" maxlength="200" data-bind="notice" placeholder="황망한 마음에 일일이 직접 연락드리지 못함을 널리 헤아려주시기 바랍니다.">${escapeHtml(d.notice)}</textarea>
             <div class="field__footer">
-              <span class="field__help">* 미작성 시 위의 내용으로 반영됩니다.</span>
+              <span class="field__help">미작성 시 위의 내용으로 반영됩니다.</span>
               <span class="field__counter"><span id="noticeCount">${(d.notice || '').length}</span>/200</span>
             </div>
           </div>
