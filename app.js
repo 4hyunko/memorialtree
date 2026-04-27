@@ -2365,6 +2365,13 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
       : `<div class="deceased__photo" style="display:flex;align-items:center;justify-content:center;color:#bbb;">⚘</div>`;
 
     const flowerCount = Number(o.flowerCount || 0);
+    const deathTerm = f.deathTerm || '별세';
+    const deathDateStr = (() => {
+      const iso = f.deathAt?.slice(0, 10) || d.death || '';
+      if (!iso) return '';
+      const [y, m, day] = iso.split('-');
+      return y && m && day ? `${y}년 ${parseInt(m, 10)}월 ${parseInt(day, 10)}일` : iso.replaceAll('-', '.');
+    })();
     return `
       <div class="obituary">
         <header class="obituary__hero">
@@ -2373,9 +2380,12 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
             <span class="hero__flower-label">헌화</span>
             <span class="hero__flower-count">${flowerCount}</span>
           </div>
-          <div class="ribbon">⚘</div>
-          <div class="head-title">${headTitle}</div>
-          <div class="head-sub">${fmtDate(f.deathAt?.slice(0, 10) || d.death)} ${escapeHtml(f.deathTerm || '별세')}</div>
+          <div class="hero__title">삼가 고인의<br>명복을 빕니다</div>
+          <div class="hero__seal" aria-hidden="true">謹弔</div>
+          <div class="hero__notice">
+            <div class="hero__name">故 ${escapeHtml(d.name || '')}님</div>
+            <div class="hero__sub">${deathDateStr ? `${deathDateStr} ${escapeHtml(deathTerm)}하셨기에<br>` : ''}삼가 알려드립니다.</div>
+          </div>
         </header>
         <div class="obituary__body">
 
