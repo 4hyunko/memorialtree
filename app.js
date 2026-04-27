@@ -2381,7 +2381,6 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
             <span class="hero__flower-count">${flowerCount}</span>
           </div>
           <div class="hero__title">삼가 고인의<br>명복을 빕니다</div>
-          <div class="hero__seal" aria-hidden="true">謹弔</div>
           <div class="hero__notice">
             <div class="hero__name">故 ${escapeHtml(d.name || '')}님</div>
             <div class="hero__sub">${deathDateStr ? `${deathDateStr} ${escapeHtml(deathTerm)}하셨기에<br>` : ''}삼가 알려드립니다.</div>
