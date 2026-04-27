@@ -2400,18 +2400,33 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
       const [y, m, day] = iso.split('-');
       return y && m && day ? `${y}년 ${parseInt(m, 10)}월 ${parseInt(day, 10)}일` : iso.replaceAll('-', '.');
     })();
+    const heroPetals = Array.from({ length: 12 }, (_, i) => {
+      const x = (i * 8.7 + 4) % 100;
+      const delay = (i * 0.6) % 7;
+      const duration = 9 + (i % 5);
+      const size = 5 + (i % 4) * 2;
+      const drift = (i % 3 === 0 ? 1 : -1) * (10 + (i % 4) * 5);
+      const rot = (i % 2 === 0 ? 1 : -1) * (300 + (i % 3) * 120);
+      return `<span class="petal" style="--x:${x}%;--d:${delay}s;--t:${duration}s;--s:${size}px;--dx:${drift}px;--r:${rot}deg"></span>`;
+    }).join('');
     return `
       <div class="obituary">
         <header class="obituary__hero">
+          <div class="hero__petals" aria-hidden="true">${heroPetals}</div>
           <div class="hero__flower-badge">
             <span class="hero__flower-icon">✿</span>
             <span class="hero__flower-label">헌화</span>
             <span class="hero__flower-count">${flowerCount}</span>
           </div>
-          <div class="hero__title">삼가 고인의<br>명복을 빕니다</div>
-          <div class="hero__notice">
-            <div class="hero__name">故 ${escapeHtml(d.name || '')}님</div>
-            <div class="hero__sub">${deathDateStr ? `${deathDateStr} ${escapeHtml(deathTerm)}하셨기에<br>` : ''}삼가 알려드립니다.</div>
+          <div class="hero__inner">
+            <div class="hero__stage">
+              <img class="hero__sway" src="image/gukhwa.png" alt="" aria-hidden="true" />
+            </div>
+            <div class="hero__title">삼가 고인의<br>명복을 빕니다</div>
+            <div class="hero__notice">
+              <div class="hero__name">故 ${escapeHtml(d.name || '')}님</div>
+              <div class="hero__sub">${deathDateStr ? `${deathDateStr} ${escapeHtml(deathTerm)}하셨기에<br>` : ''}삼가 알려드립니다.</div>
+            </div>
           </div>
         </header>
         <div class="obituary__body">
