@@ -2570,7 +2570,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
   // ---------- Share sheet ----------
   const KAKAO_JS_KEY = 'bde79058e624bc54d4dcdedc60406615';
-  const DEFAULT_SHARE_IMAGE = 'https://placehold.co/800x800/f3ede4/333333.png?text=%E2%9A%98';
+  const DEFAULT_SHARE_IMAGE = 'https://images.unsplash.com/photo-1561181286-d3fee7d55364?w=800&h=800&fit=crop&auto=format';
 
   function ensureKakaoInit() {
     if (!window.Kakao) return false;
@@ -2580,12 +2580,14 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
     return true;
   }
 
+  const KAKAO_SHARE_TEMPLATE_ID = 132583;
+
   function shareToKakao(obit) {
     if (!ensureKakaoInit() || !window.Kakao?.Share) {
       toast('카카오톡 공유를 불러올 수 없습니다.');
       return;
     }
-    const baseUrl = `${location.href.split('#')[0]}#detail/${obit.id}`;
+    const url = `${location.href.split('#')[0]}#detail/${obit.id}`;
     const name = obit.deceased?.name?.trim() || '고인';
     const deathDate = fmtDate(obit.funeral?.deathAt?.slice(0, 10) || obit.deceased?.death);
     const term = obit.funeral?.deathTerm || '별세';
@@ -2599,23 +2601,17 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
     if (carryStr) descParts.push(carryStr);
     if (home) descParts.push(home);
     const description = descParts.join('\n') || '삼가 고인의 명복을 빕니다.';
-    // Supabase 공개 URL 또는 기본 이미지
     const photo = obit.deceased?.photo;
     const imageUrl = (photo && /^https?:\/\//.test(photo)) ? photo : DEFAULT_SHARE_IMAGE;
-    const linkObj = { mobileWebUrl: baseUrl, webUrl: baseUrl };
 
-    window.Kakao.Share.sendDefault({
-      objectType: 'feed',
-      content: {
-        title: `故 ${name}님의 부고를 알립니다`,
+    window.Kakao.Share.sendCustom({
+      templateId: KAKAO_SHARE_TEMPLATE_ID,
+      templateArgs: {
+        name,
         description,
         imageUrl,
-        link: linkObj,
+        url,
       },
-      buttonTitle: '부고장 보기',
-      buttons: [
-        { title: '부고장 보기', link: linkObj },
-      ],
     });
   }
 
