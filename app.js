@@ -281,6 +281,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
       // 추모 메시지
       messagesEnabled: true,
       messages: [], // [{id, name, body, password, createdAt}]
+      flowerCount: 0,
     };
   }
 
@@ -2342,7 +2343,15 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
         <button class="btn btn--primary" id="btnShare">공유하기</button>
       </div>
     `);
-    $('#btnFlower').addEventListener('click', () => toast('마음이 전달되었습니다.'));
+    $('#btnFlower').addEventListener('click', () => {
+      const cur = storage.get(id);
+      if (!cur) return;
+      cur.flowerCount = Number(cur.flowerCount || 0) + 1;
+      storage.upsert(cur);
+      const countEl = viewEl.querySelector('.hero__flower-count');
+      if (countEl) countEl.textContent = cur.flowerCount;
+      toast('마음이 전달되었습니다.');
+    });
     $('#btnShare').addEventListener('click', () => openShareSheet(id));
   }
 
@@ -2355,9 +2364,15 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
       ? `<div class="deceased__photo ${d.photoBW ? 'is-bw' : ''}">${photoCropImgHTML(d, 80, 100)}</div>`
       : `<div class="deceased__photo" style="display:flex;align-items:center;justify-content:center;color:#bbb;">⚘</div>`;
 
+    const flowerCount = Number(o.flowerCount || 0);
     return `
       <div class="obituary">
         <header class="obituary__hero">
+          <div class="hero__flower-badge">
+            <span class="hero__flower-icon">✿</span>
+            <span class="hero__flower-label">헌화</span>
+            <span class="hero__flower-count">${flowerCount}</span>
+          </div>
           <div class="ribbon">⚘</div>
           <div class="head-title">${headTitle}</div>
           <div class="head-sub">${fmtDate(f.deathAt?.slice(0, 10) || d.death)} ${escapeHtml(f.deathTerm || '별세')}</div>

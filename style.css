@@ -1120,6 +1120,31 @@ img {
   color: #3a2e22;
 }
 
+.hero__flower-badge {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 999px;
+  font-size: 12px;
+  color: #6b5942;
+}
+
+.hero__flower-icon {
+  font-size: 12px;
+  color: #b88a5a;
+}
+
+.hero__flower-count {
+  font-weight: 600;
+  color: #3a2e22;
+  margin-left: 2px;
+}
+
 .obituary__hero .ribbon {
   font-size: 28px;
 }
