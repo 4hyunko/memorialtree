@@ -2446,17 +2446,20 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
             </div>
           </section>
 
-          ${o.mourners.length || o.notice ? `
+          ${(() => {
+            const validMourners = (o.mourners || []).filter(m => (m.relation || m.name));
+            const noticeText = (o.notice && o.notice.trim()) ? o.notice : '황망한 마음에 일일이 직접 연락드리지 못함을 널리 헤아려주시기 바랍니다.';
+            return `
             <section class="card">
               <div class="card__title"><span class="ico">⚘</span>상주 정보</div>
-              ${o.mourners.length ? `
+              ${validMourners.length ? `
                 <dl class="def-list">
-                  ${o.mourners.map(m => `<div class="row"><dt>${escapeHtml(m.relation || '')}</dt><dd>${escapeHtml(m.name || '')}</dd></div>`).join('')}
+                  ${validMourners.map(m => `<div class="row"><dt>${escapeHtml(m.relation || '')}</dt><dd>${escapeHtml(m.name || '')}</dd></div>`).join('')}
                 </dl>
               ` : ''}
-              ${o.notice ? `<div class="message-block mourner-notice">${escapeHtml(o.notice)}</div>` : ''}
+              <div class="message-block mourner-notice">${escapeHtml(noticeText)}</div>
             </section>
-          `: ''}
+          `;})()}
 
           <section class="card">
             <div class="card__title"><span class="ico">⚘</span>장례 일정</div>
