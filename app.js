@@ -1478,7 +1478,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
       <footer class="site-footer">
         <div class="site-footer__company">
           <div class="site-footer__name">(주) 호학당</div>
-          <div class="site-footer__line">사업자 등록번호 : 1111111111 | 대표 : 고현</div>
+          <div class="site-footer__line">사업자 등록번호 : 278-86-02319 | 대표 : 고현</div>
           <div class="site-footer__line">서울 송파구 가락로5길 32 2층</div>
         </div>
         <nav class="site-footer__links">
