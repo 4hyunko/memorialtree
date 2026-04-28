@@ -2375,22 +2375,34 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
     if (!state.draft) { navigate('create'); return; }
     setHeader({ title: '부고장 미리보기', back: true, menu: false });
     const d = state.draft;
+    const isEditMode = !!state.editOriginalPasswordHash;
     viewEl.innerHTML = obituaryHTML(d, { preview: true });
     initFuneralMaps(viewEl);
     viewEl.insertAdjacentHTML('beforeend', `
       <div class="bottom-cta bottom-cta--two">
         <button class="btn btn--secondary" id="btnEdit">편집하기</button>
-        <button class="btn btn--primary" id="btnPublish">등록하기</button>
+        <button class="btn btn--primary" id="btnPublish">${isEditMode ? '수정완료' : '등록하기'}</button>
       </div>
     `);
     $('#btnEdit').addEventListener('click', () => navigate('create'));
     $('#btnPublish').addEventListener('click', () => {
-      d.status = 'published';
-      d.updatedAt = new Date().toISOString();
-      storage.upsert(d);
-      toast('부고장 링크가 복사되었습니다.');
-      try { navigator.clipboard?.writeText(`${location.href.split('#')[0]}#detail/${d.id}`); } catch { }
-      navigate('detail', { id: d.id });
+      if (isEditMode) {
+        // 수정 모드: 비밀번호 해시 복원 후 저장
+        if (!d.password && state.editOriginalPasswordHash) d.password = state.editOriginalPasswordHash;
+        d.status = 'active';
+        d.updatedAt = new Date().toISOString();
+        storage.upsert(d);
+        toast('부고장 수정이 완료되었어요.');
+        navigate('my');
+      } else {
+        // 신규 등록
+        d.status = 'published';
+        d.updatedAt = new Date().toISOString();
+        storage.upsert(d);
+        toast('부고장 링크가 복사되었습니다.');
+        try { navigator.clipboard?.writeText(`${location.href.split('#')[0]}#detail/${d.id}`); } catch { }
+        navigate('detail', { id: d.id });
+      }
     });
   }
 
