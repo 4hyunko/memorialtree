@@ -69,6 +69,7 @@ img {
   position: relative;
   max-width: var(--max-w);
   min-height: 100vh;
+  min-height: 100dvh;
   margin: 0 auto;
   background: var(--c-bg);
   overflow: hidden;
@@ -143,6 +144,7 @@ img {
 /* View */
 .view {
   min-height: calc(100vh - var(--header-h));
+  min-height: calc(100dvh - var(--header-h));
   padding-bottom: calc(20px + var(--safe-bottom));
 }
 
@@ -152,7 +154,8 @@ img {
   display: flex;
   flex-direction: column;
   height: calc(100vh - var(--header-h));
-  padding: 14px 24px 24px;
+  height: calc(100dvh - var(--header-h));
+  padding: 14px 24px calc(24px + var(--safe-bottom));
   background: #202020;
   color: #fff;
   text-align: left;
@@ -278,6 +281,61 @@ img {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.05),
     inset 0 -1px 0 rgba(0, 0, 0, 0.4);
+}
+
+/* ============ Site Footer (랜딩 하단) ============ */
+.site-footer {
+  padding: 24px 24px calc(28px + var(--safe-bottom));
+  background: var(--c-surface);
+  color: var(--c-text-2);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.site-footer__name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--c-text);
+  margin-bottom: 10px;
+}
+
+.site-footer__line {
+  margin-bottom: 4px;
+  color: var(--c-text-2);
+}
+
+.site-footer__links {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 18px;
+  border-top: 1px solid var(--c-border);
+  padding-top: 14px;
+}
+
+.site-footer__links button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 10px 0;
+  font-size: 14px;
+  color: var(--c-text);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.site-footer__links button::after {
+  content: '›';
+  color: var(--c-text-3);
+  font-size: 18px;
+  font-weight: 400;
+}
+
+.site-footer__links button:hover {
+  color: var(--c-text);
 }
 
 /* ============ Buttons ============ */
@@ -2220,6 +2278,44 @@ img {
   height: 32px;
   padding: 0 10px;
   font-size: 13px;
+}
+
+/* ============ Light particles (헌화 인터랙션) ============ */
+.light-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 60;
+  overflow: hidden;
+}
+
+.light-particle {
+  position: absolute;
+  width: var(--size, 10px);
+  height: var(--size, 10px);
+  margin-left: calc(var(--size, 10px) / -2);
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 50%,
+    rgba(255, 250, 220, 1) 0%,
+    rgba(255, 224, 150, 0.95) 35%,
+    rgba(255, 200, 110, 0) 75%);
+  box-shadow:
+    0 0 8px rgba(255, 230, 160, 0.9),
+    0 0 16px rgba(255, 210, 130, 0.55);
+  opacity: 0;
+  will-change: transform, opacity;
+  animation: light-rise var(--duration, 2400ms) ease-out var(--delay, 0ms) forwards;
+}
+
+@keyframes light-rise {
+  0%   { transform: translate(0, 0) scale(0.6); opacity: 0; }
+  10%  { opacity: 1; transform: translate(0, -10px) scale(1); }
+  55%  { opacity: 0.95; }
+  100% { transform: translate(var(--drift, 30px), -260px) scale(0.6); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .light-particle { animation: none; opacity: 0; }
 }
 
 /* ============ Toast ============ */

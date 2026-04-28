@@ -310,6 +310,35 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
     toastTimer = setTimeout(hideToast, 2200);
   }
 
+  // ---------- Light particles (헌화하기 인터랙션) ----------
+  function spawnIncenseSmoke(originEl) {
+    if (!originEl) return;
+    const rect = originEl.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const top = rect.top;
+    const layer = document.createElement('div');
+    layer.className = 'light-layer';
+    document.body.appendChild(layer);
+    const PARTICLES = 14;
+    for (let i = 0; i < PARTICLES; i++) {
+      const p = document.createElement('span');
+      p.className = 'light-particle';
+      const offsetX = (Math.random() - 0.5) * 60;
+      const drift = (Math.random() - 0.5) * 140;
+      const size = 6 + Math.random() * 10;
+      const delay = i * 80 + Math.random() * 120;
+      const duration = 1800 + Math.random() * 1200;
+      p.style.left = `${cx + offsetX}px`;
+      p.style.top = `${top}px`;
+      p.style.setProperty('--size', `${size}px`);
+      p.style.setProperty('--drift', `${drift}px`);
+      p.style.setProperty('--duration', `${duration}ms`);
+      p.style.setProperty('--delay', `${delay}ms`);
+      layer.appendChild(p);
+    }
+    setTimeout(() => layer.remove(), 4000);
+  }
+
   // ---------- Modal ----------
   const modalEl = $('#modal'), modalPanel = $('#modalPanel');
   function openModal({ title, desc, body = '', actions = [] }) {
@@ -1446,9 +1475,23 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
           <button class="btn btn--secondary" id="btnCreate">부고장 만들기</button>
         </div>
       </section>
+      <footer class="site-footer">
+        <div class="site-footer__company">
+          <div class="site-footer__name">(주) 호학당</div>
+          <div class="site-footer__line">사업자 등록번호 : 1111111111 | 대표 : 고현</div>
+          <div class="site-footer__line">서울 송파구 가락로5길 32 2층</div>
+        </div>
+        <nav class="site-footer__links">
+          <button type="button" data-action="privacy">개인정보처리방침</button>
+          <button type="button" data-action="terms">서비스이용약관</button>
+        </nav>
+      </footer>
     `;
     $('#btnMy').addEventListener('click', () => openMyObituariesSheet());
     $('#btnCreate').addEventListener('click', () => { state.draft = newObituary(); navigate('create'); });
+    viewEl.querySelectorAll('.site-footer__links [data-action]').forEach(btn => {
+      btn.addEventListener('click', () => navigate(btn.dataset.action));
+    });
   }
 
   // ---------- My obituaries ----------
@@ -2375,13 +2418,14 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
         <button class="btn btn--primary" id="btnShare">공유하기</button>
       </div>
     `);
-    $('#btnFlower').addEventListener('click', () => {
+    $('#btnFlower').addEventListener('click', (e) => {
       const cur = storage.get(id);
       if (!cur) return;
       cur.flowerCount = Number(cur.flowerCount || 0) + 1;
       storage.upsert(cur);
       const countEl = viewEl.querySelector('.hero__flower-count');
       if (countEl) countEl.textContent = cur.flowerCount;
+      spawnIncenseSmoke(e.currentTarget);
       toast('마음이 전달되었습니다.');
     });
     $('#btnShare').addEventListener('click', () => openShareSheet(id));
