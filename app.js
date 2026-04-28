@@ -2477,7 +2477,8 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
             const addr = f.funeralHomeAddr || h?.addr || '';
             const tel = f.funeralHomePhone || h?.telno || '';
             const hp = h?.homepageUrl || '';
-            const room = f.funeralHomeRoom || '';
+            const roomRaw = f.funeralHomeRoom || '';
+            const room = roomRaw && /^\d+$/.test(roomRaw.trim()) ? `${roomRaw.trim()}호` : roomRaw;
             const addrForCopy = addr || f.funeralHome || '';
             return `
             <section class="card">
