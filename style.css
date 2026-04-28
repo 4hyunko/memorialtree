@@ -114,8 +114,10 @@ img {
 }
 
 .logo-mark {
-  font-size: 18px;
-  color: #444;
+  height: 22px;
+  width: auto;
+  display: inline-block;
+  vertical-align: middle;
 }
 
 .header__menu {
@@ -2626,15 +2628,73 @@ img {
 
 /* Privacy/Terms */
 .policy {
-  padding: 20px 16px;
+  padding: 20px 18px 32px;
   background: var(--c-surface);
   min-height: 100%;
+  font-size: 13px;
+  color: var(--c-text-2);
+  line-height: 1.75;
 }
 
 .policy p {
+  margin-bottom: 12px;
+}
+
+.policy__intro {
+  background: #f7f7f7;
+  border-left: 3px solid var(--c-text-3);
+  padding: 12px 14px;
+  margin-bottom: 22px;
+  color: var(--c-text);
   font-size: 13px;
-  color: var(--c-text-2);
   line-height: 1.7;
+}
+
+.policy h3 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--c-text);
+  margin: 22px 0 10px;
+  padding-top: 4px;
+}
+
+.policy h3:first-of-type {
+  margin-top: 0;
+}
+
+.policy ol,
+.policy ul {
+  padding-left: 18px;
+  margin-bottom: 12px;
+}
+
+.policy ol > li,
+.policy ul > li {
+  margin-bottom: 6px;
+}
+
+.policy ol ul,
+.policy ul ul {
+  margin-top: 4px;
+  margin-bottom: 0;
+  padding-left: 16px;
+  list-style: disc;
+  color: var(--c-text-3);
+}
+
+.policy ol ul li,
+.policy ul ul li {
+  margin-bottom: 2px;
+  font-size: 12.5px;
+}
+
+.policy__footer {
+  margin-top: 28px;
+  padding-top: 14px;
+  border-top: 1px solid var(--c-border);
+  font-size: 12px;
+  color: var(--c-text-3);
+  line-height: 1.6;
 }
 
 /* End page */
