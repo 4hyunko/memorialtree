@@ -88,6 +88,18 @@ img {
   border-bottom: 1px solid var(--c-border);
 }
 
+/* 랜딩 / 부고장 상세·미리보기: 헤더 다크 톤 + 흰 아이콘·타이틀 */
+.app:has(.landing) .header,
+.app:has(.obituary) .header {
+  background: #202020;
+  border-bottom-color: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+.app:has(.landing) .logo-mark,
+.app:has(.obituary) .logo-mark {
+  filter: brightness(0) invert(1);
+}
+
 .header__back {
   width: 40px;
   height: 40px;
