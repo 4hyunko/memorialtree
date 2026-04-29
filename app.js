@@ -1544,9 +1544,9 @@ const CHR_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1e
             <img class="landing__sway" src="image/gukhwa.png" alt="" aria-hidden="true" />
           </div>
           <div class="landing__copy">
-            <div class="landing__sub">간편 부고장</div>
-            <div class="landing__title">부고장을 제작합니다</div>
-            <div class="landing__desc">유족들과 조문객들에게 전할 안내를 작성해보세요</div>
+            <div class="landing__sub">간편 부고장 서비스</div>
+            <div class="landing__title">정중한 부고 안내의 시작, 메모릿</div>
+            <div class="landing__desc">마음을 담은 부고장을 무료로 만들어보세요.</div>
           </div>
         </div>
         <div class="landing__cta">
