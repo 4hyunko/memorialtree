@@ -1390,8 +1390,11 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
   });
 
   $('#headerBack').addEventListener('click', () => {
-    // simple back logic
-    if (state.route === 'create' || state.route === 'edit') {
+    const isEditMode = !!state.editOriginalPasswordHash;
+    const draftId = state.draft?.id || state.params?.id;
+
+    if (state.route === 'create') {
+      // 신규 작성 화면 → 랜딩
       if (state.draft && hasUnsavedChanges()) {
         openModal({
           title: '안내',
@@ -1402,18 +1405,43 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
           ]
         }).then((v) => { if (v === 'leave') { state.draft = null; navigate('landing'); } });
       } else { navigate('landing'); }
+
+    } else if (state.route === 'edit') {
+      // 수정 화면 → 부고장 상세 (또는 랜딩)
+      const goBack = () => {
+        state.draft = null;
+        draftId ? navigate('detail', { id: draftId }) : navigate('landing');
+      };
+      if (state.draft && hasUnsavedChanges()) {
+        openModal({
+          title: '안내',
+          desc: '수정 중인 내용이 저장되지 않아요.\n계속 수정하시겠어요?',
+          actions: [
+            { label: '나가기', value: 'leave' },
+            { label: '계속 수정', primary: true },
+          ]
+        }).then((v) => { if (v === 'leave') goBack(); });
+      } else { goBack(); }
+
     } else if (state.route === 'preview') {
-      navigate('create');
+      // 미리보기 → 수정 화면 or 신규 작성 화면
+      if (isEditMode) {
+        navigate('edit', { id: draftId });
+      } else {
+        navigate('create');
+      }
+
     } else if (state.route === 'detail') {
       navigate('landing');
-    } else if (state.route === 'edit') {
-      navigate('detail', { id: state.params.id });
+
     } else if (state.route === 'messages' || state.route === 'message-write') {
       const id = state.params.id || state.activeObituaryId;
       if (id) navigate('detail', { id });
       else navigate('landing');
+
     } else if (['my', 'privacy', 'terms', 'ended'].includes(state.route)) {
       history.length > 1 ? history.back() : navigate('landing');
+
     } else {
       navigate('landing');
     }
