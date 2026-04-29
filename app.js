@@ -383,17 +383,29 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
   // 키보드가 올라올 때 바텀시트를 키보드 위로 밀어올리기
   function _syncSheetToKeyboard() {
-    if (!window.visualViewport) return;
     const vv = window.visualViewport;
-    // 키보드 높이 = 전체 뷰포트 - 비주얼 뷰포트 - 상단 오프셋
+    if (!vv) return;
+    // 키보드 높이 = 레이아웃 뷰포트 - 비주얼 뷰포트(키보드 제외 영역) - 스크롤 오프셋
     const keyH = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-    sheetPanel.style.bottom = keyH > 0 ? `${keyH}px` : '';
+    sheetPanel.style.bottom    = keyH > 0 ? `${keyH}px` : '';
     sheetPanel.style.maxHeight = keyH > 0 ? `${vv.height * 0.92}px` : '';
+  }
+
+  // focusin: 키보드 완전히 뜰 때까지 대기 후 동기화 (iOS 보조)
+  function _onSheetFocusIn(e) {
+    if (!['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+    setTimeout(_syncSheetToKeyboard, 350); // iOS 키보드 애니메이션 대기
+  }
+  // focusout: 패널 밖으로 포커스 나갔을 때만 리셋
+  function _onSheetFocusOut(e) {
+    if (sheetPanel.contains(e.relatedTarget)) return; // 패널 내 다른 인풋으로 이동 시 무시
+    setTimeout(_syncSheetToKeyboard, 100);
   }
 
   function openSheet(html) {
     sheetPanel.innerHTML = html;
     sheetEl.setAttribute('aria-hidden', 'false');
+    // visualViewport 방식 (Android + 최신 iOS)
     if (window.visualViewport && !sheetEl._vvCleanup) {
       window.visualViewport.addEventListener('resize', _syncSheetToKeyboard);
       window.visualViewport.addEventListener('scroll', _syncSheetToKeyboard);
@@ -402,12 +414,17 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
         window.visualViewport.removeEventListener('scroll', _syncSheetToKeyboard);
       };
     }
+    // focusin/focusout 보조 트리거 (iOS Safari 대응)
+    sheetPanel.addEventListener('focusin',  _onSheetFocusIn);
+    sheetPanel.addEventListener('focusout', _onSheetFocusOut);
   }
 
   function closeSheet() {
     sheetEl.setAttribute('aria-hidden', 'true');
     if (sheetEl._vvCleanup) { sheetEl._vvCleanup(); sheetEl._vvCleanup = null; }
-    sheetPanel.style.bottom = '';
+    sheetPanel.removeEventListener('focusin',  _onSheetFocusIn);
+    sheetPanel.removeEventListener('focusout', _onSheetFocusOut);
+    sheetPanel.style.bottom    = '';
     sheetPanel.style.maxHeight = '';
   }
   $('#bottomSheetBackdrop').addEventListener('click', closeSheet);
