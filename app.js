@@ -1606,7 +1606,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
     }
 
     const isEdit = state.route === 'edit';
-    setHeader({ title: isEdit ? '부고장 수정하기' : '부고장 만들기', back: true, menu: false, saveDraft: true });
+    setHeader({ title: isEdit ? '부고장 수정' : '부고장 만들기', back: true, menu: false, saveDraft: true });
 
     const d = state.draft;
     if (isEdit && isHashed(d.password)) {
