@@ -1061,13 +1061,12 @@ img {
 }
 
 .builder-notice {
-  margin: 0;
-  padding: 10px 16px;
-  background: var(--c-surface);
-  color: var(--c-text-2);
-  border-radius: 0;
+  margin: 12px;
+  padding: 12px 14px;
+  background: #fff3e0;
+  color: #8a4b00;
+  border-radius: var(--r-md);
   font-size: 13px;
-  border-bottom: 1px solid var(--c-border);
 }
 
 .builder-notice .req {
