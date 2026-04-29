@@ -1478,7 +1478,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
       <footer class="site-footer">
         <div class="site-footer__company">
           <div class="site-footer__name">(주) 호학당</div>
-          <div class="site-footer__line">사업자 등록번호 : 278-86-02319 | 대표 : 고현</div>
+          <div class="site-footer__line">사업자 등록번호 : 278-86-02319 | 대표 : 고현 | 임태일</div>
           <div class="site-footer__line">서울 송파구 가락로5길 32 2층</div>
         </div>
         <nav class="site-footer__links">
@@ -2967,7 +2967,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
       <p>본 약관은 2026년 4월 28일부터 시행됩니다.</p>
 
       <div class="policy__footer">
-        <p>(주)호학당 · 사업자등록번호 278-86-02319 · 대표 고현<br/>
+        <p>(주)호학당 · 사업자등록번호 278-86-02319 · 대표 고현 | 임태일<br/>
         서울 송파구 가락로5길 32 2층</p>
       </div>
     `,
