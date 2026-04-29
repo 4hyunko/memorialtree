@@ -2665,7 +2665,7 @@ const CHR_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1e
             return `
             <section class="card">
               <div class="card__title" style="display:flex;justify-content:space-between;align-items:center;">
-                <span><span class="ico">${CHR_ICON}</span>추모 메시지</span>
+                <span style="display:inline-flex;align-items:center;gap:6px;"><span class="ico">${CHR_ICON}</span>추모 메시지</span>
                 <button class="card__action" id="writeMsg">메시지 작성</button>
               </div>
               ${visible.length === 0
@@ -2897,7 +2897,7 @@ const CHR_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1e
     const id = state.params.id || state.activeObituaryId;
     setHeader({ title: '추모 메시지 작성', back: true, menu: false });
     viewEl.innerHTML = `
-      <div style="padding:16px;background:var(--c-surface);min-height:100%;">
+      <div style="padding:16px;background:#f5f5f5;min-height:100%;">
         <div class="field">
           <label class="field__label">이름</label>
           <input class="input" id="mName" placeholder="작성자명을 입력해주세요." />
