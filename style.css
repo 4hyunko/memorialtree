@@ -1061,12 +1061,13 @@ img {
 }
 
 .builder-notice {
-  margin: 12px;
-  padding: 12px 14px;
-  background: #fff3e0;
-  color: #8a4b00;
-  border-radius: var(--r-md);
+  margin: 0;
+  padding: 10px 16px;
+  background: var(--c-surface);
+  color: var(--c-text-2);
+  border-radius: 0;
   font-size: 13px;
+  border-bottom: 1px solid var(--c-border);
 }
 
 .builder-notice .req {
@@ -1115,6 +1116,21 @@ img {
   display: grid;
   gap: 8px;
   z-index: 40;
+}
+
+/* 부고장 상세/미리보기: 하단 버튼 다크 톤 — 랜딩·히어로와 통일 */
+.view:has(.obituary) .bottom-cta {
+  background: #202020;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+.view:has(.obituary) .bottom-cta .btn--secondary {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: #fff;
+}
+.view:has(.obituary) .bottom-cta .btn--primary {
+  background: #fff;
+  color: #1a1a1a;
 }
 
 .bottom-cta--two {
