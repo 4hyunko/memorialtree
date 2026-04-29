@@ -150,6 +150,15 @@ img {
   padding-bottom: calc(20px + var(--safe-bottom));
 }
 
+/* 부고장 만들기/수정/나의 부고장 관리/기타 폼 화면: 밝은 배경 */
+.view:has(.create-page),
+.view:has(.list),
+.view:has(.ended),
+.view:has(.policy) {
+  background: #f5f5f5;
+}
+/* 부고장 상세/미리보기: --c-bg(#1e1e1e) 유지 — 별도 규칙 없음 */
+
 /* ============ Landing (dark + 3D frame) ============ */
 .landing {
   position: relative;
