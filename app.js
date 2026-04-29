@@ -2897,7 +2897,7 @@ const CHR_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1e
     const id = state.params.id || state.activeObituaryId;
     setHeader({ title: '추모 메시지 작성', back: true, menu: false });
     viewEl.innerHTML = `
-      <div style="padding:16px;background:#f5f5f5;min-height:100%;">
+      <div style="padding:16px;background:#f5f5f5;min-height:calc(100dvh - var(--header-h));">
         <div class="field">
           <label class="field__label">이름</label>
           <input class="input" id="mName" placeholder="작성자명을 입력해주세요." />
