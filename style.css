@@ -1077,6 +1077,9 @@ img {
 /* ============ Editor pages ============ */
 .create-page {
   padding-bottom: 100px;
+  background: #f5f5f5;
+  min-height: calc(100vh - var(--header-h));
+  min-height: calc(100dvh - var(--header-h));
 }
 
 .tab-bar {
@@ -1200,6 +1203,9 @@ img {
 /* My obituaries list */
 .list {
   padding: 12px;
+  background: #f5f5f5;
+  min-height: calc(100vh - var(--header-h));
+  min-height: calc(100dvh - var(--header-h));
 }
 
 .list__card {
