@@ -1,0 +1,62 @@
+name: Supabase Keep-Alive
+
+# Supabase 무료 티어는 7일간 무활동 시 프로젝트가 자동 일시중지됨.
+# 이 워크플로우가 6시간마다 Storage API에 가벼운 요청을 보내 활성 상태 유지.
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # 매 6시간(UTC) — 4번/day, 28번/week
+  workflow_dispatch:          # Actions 탭에서 수동 실행도 가능
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Ping Supabase Storage API
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          # 공백/줄바꿈 trim
+          URL=$(printf '%s' "$SUPABASE_URL" | tr -d '[:space:]')
+          KEY=$(printf '%s' "$SUPABASE_ANON_KEY" | tr -d '[:space:]')
+
+          # 진단 (값은 안 찍고 길이만)
+          echo "URL prefix: ${URL:0:20}..."
+          echo "URL length: ${#URL}"
+          echo "KEY length: ${#KEY}"
+
+          if [ -z "$URL" ] || [ -z "$KEY" ]; then
+            echo "::error::SUPABASE_URL 또는 SUPABASE_ANON_KEY가 비어있음"
+            exit 1
+          fi
+          if [[ "$URL" != https://* ]]; then
+            echo "::error::SUPABASE_URL이 https://로 시작하지 않음"
+            exit 1
+          fi
+
+          # curl 실패해도 step은 계속 (분석 후 마지막에 판정)
+          set +e
+          RESPONSE=$(curl -sS --max-time 30 -o /tmp/body -w "%{http_code}" \
+            "$URL/storage/v1/bucket" \
+            -H "apikey: $KEY" \
+            -H "Authorization: Bearer $KEY" 2>&1)
+          CURL_EXIT=$?
+          set -e
+
+          echo "curl exit: $CURL_EXIT"
+          echo "HTTP code: $RESPONSE"
+          echo "📡 Pinged at $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+
+          if [ "$CURL_EXIT" -ne 0 ]; then
+            echo "::error::curl 실패 (exit $CURL_EXIT). DNS/네트워크/URL 확인 필요"
+            exit 1
+          fi
+
+          # 2xx/4xx 모두 "프로젝트 깨어있음"의 신호. 5xx만 실패.
+          if [ "$RESPONSE" -ge 500 ]; then
+            echo "::error::Supabase 5xx 응답 (HTTP $RESPONSE)"
+            exit 1
+          fi
+          echo "✅ Supabase is alive (HTTP $RESPONSE)"
